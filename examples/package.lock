@@ -1,0 +1,10 @@
+prefixes:
+  ntp: pkg-ntp
+  tftp: ..
+packages:
+  ..:
+    path: ..
+  pkg-ntp:
+    url: github.com/toitlang/pkg-ntp
+    version: 1.0.0
+    hash: 1c3cc4a4819f459393f00efc576f66f838665719

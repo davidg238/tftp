@@ -1,0 +1,10 @@
+prefixes:
+  bme280: bme280-driver
+  tftp: ..
+packages:
+  ..:
+    path: ..
+  bme280-driver:
+    url: github.com/toitware/bme280-driver
+    version: 1.0.0
+    hash: 65b88ac19a5e2b48627a2dbae6d7757ae45c502c

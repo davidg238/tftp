@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "sdk-version": "v2.0.0-alpha.74",
+  "artemis-version": "v0.4.4",
+  "max-offline": "15m",
+  "connections": [
+    {
+      "type": "wifi",
+      "ssid": "inet",
+      "password": "bubbles14"
+    }
+  ],
+  "containers": {
+    "client": {
+      "entrypoint": "client.toit",
+      "triggers": [{"interval": "60s"}]
+    }
+  }
+}
