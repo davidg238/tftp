@@ -13,7 +13,7 @@
   "containers": {
     "client": {
       "entrypoint": "client.toit",
-      "triggers": [{"interval": "60s"}]
+      "triggers": [{"interval": "450s"}]
     }
   }
 }

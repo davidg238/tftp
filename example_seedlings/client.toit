@@ -1,10 +1,12 @@
+// Copyright 2023 Ekorau LLC
+
 import i2c
 import gpio
 import bme280
 
-import tftp show TFTPClient
+import tftp show TFTPClient RingStore
+
 import .ezsbc show ESP32Feather
-import .ringstore show RingStore
 
 SERVER ::= "192.168.0.179"
 
@@ -58,6 +60,7 @@ html tmin/float temp/float tmax/float hmin/float hum/float hmax/float pmin/float
           setTimeout(function(){location.reload()}, 50000);
         </script>
         <style type="text/css" media="screen">
+          p {font-size: 20px;}
           table{
           border-collapse:collapse;
           border:1px solid #FF0000;
@@ -70,7 +73,7 @@ html tmin/float temp/float tmax/float hmin/float hum/float hmax/float pmin/float
         </style>
       </head>
       <body>
-        <h1>Temperature Humidity Pressure for Seedlings</h1>
+        <h1>Temperature/Humidity/Pressure for Seedling</h1>
         <table>
           <thead>
             <tr>
@@ -101,6 +104,7 @@ html tmin/float temp/float tmax/float hmin/float hum/float hmax/float pmin/float
             </tr>
           </tbody>
         </table>
+        <p>(Measured every 7.5 minutes, min/max over last 12 hour period)</p>
         <h2>$(Time.now.plus --h=-7) Battery Voltage: $(%.3f voltage)</h2>
       </body>
     </html>

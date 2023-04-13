@@ -1,5 +1,4 @@
 .packages/
-.build/
-406597.pdf
-document.pdf
-reference.md
+examples/.packages/
+example_seedlings/build/
+example_seedlings/.packages/

@@ -1,4 +1,5 @@
-// Copyright 2022 Ekorau LLC
+// Copyright 2022, 2023 Ekorau LLC
+
 import device show hardware_id
 import gpio
 import i2c

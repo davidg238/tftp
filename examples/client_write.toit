@@ -1,3 +1,5 @@
+// Copyright 2023 Ekorau LLC
+
 import tftp show TFTPClient
 import encoding.json
 import encoding.tison
