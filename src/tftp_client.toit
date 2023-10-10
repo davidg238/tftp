@@ -52,13 +52,13 @@ class TFTPClient:
     exchange.write_with this
     update_host_port_ TFTP_DEFAULT_PORT  // Reset to the default, after an exchange, to enable client reuse.
     return exchange.result
-/*
+
   read --name --mode="octet":
     exchange := ClientExchange.read --name=name --mode=mode
-    exchange.run_with this
+    exchange.read_with this
     update_host_port_ TFTP_DEFAULT_PORT  // Reset to the default, after an exchange, to enable client reuse.
     return exchange.result
-*/
+
   close -> none:
     udp_socket.close    
 
@@ -121,13 +121,18 @@ class ClientExchange:
   There is only one outstanding request at a time.
   This is the exchange entry point, so the opcode has been set for read or write.
   */
+  read_with client /TFTPClient -> none:  // Reads are initiated from the client.
+    while opcode != EXIT:
+      client.send_ reader_bytes
+      reader_handle client.receive_
+
   write_with client /TFTPClient -> none:
     while opcode != EXIT:
-      client.send_ next_bytes
-      respond_to client.receive_
+      client.send_ writer_bytes
+      writer_handle client.receive_
 
   // WRQ state machine -----------------------------------------------------
-  respond_to received_bytes/ByteArray -> none:
+  writer_handle received_bytes/ByteArray -> none:
     breader := reader.BufferedReader (bytes.Reader received_bytes)
     received := Packet.deserialize breader
     // write exchange  -----------------------------------------
@@ -136,9 +141,7 @@ class ClientExchange:
     else if opcode == DATA  and received.opcode == ACK:     keep_writing (received as PacketACK)
     else if opcode == DATA  and received.opcode == TIMEOUT: resend_write
     else if opcode == DATA  and received.opcode == ERROR:   exit_error (received as PacketERROR)
-    // read ----------------------------------------------------
-
-    // WRQ or RRQ packet failed --------------------------------
+    // WRQ packet failed --------------------------------
     else if received.opcode == ERROR:                       exit_error (received as PacketERROR)                
   
   // WRQ state machine helpers ---------------------------------------------
@@ -165,6 +168,7 @@ class ClientExchange:
   resend_write -> none:
     tries += 1
     if tries < 3:
+      delay_on tries
       return  // The last cached frame will be resent, since not drained.
     else:
       opcode = EXIT
@@ -182,17 +186,7 @@ class ClientExchange:
     opcode = EXIT
     result = Result.fail "Server error while sending data: $received.error_msg"
 
-  // --------------------------------------------------------------------------
-
-  delay_on tries/int -> none:
-    if tries == 1: 
-      sleep --ms=1500
-      return
-    if tries == 2: 
-      sleep --ms=3000
-      return
-
-  next_bytes -> ByteArray:
+  writer_bytes -> ByteArray:
     if tries > 0: return cached
     if opcode == WRQ: return wrq_frame
     if opcode == DATA: return next_data_frame
@@ -213,4 +207,39 @@ class ClientExchange:
       drained = true
     cached = (PacketDATA block_num barray).serialize
     return cached
+
+/* RRQ state machine -----------------------------------------------------
+      RRQ:DATA, (ACK:DATA)+
+*/
+  reader_handle received_bytes/ByteArray -> none:
+    breader := reader.BufferedReader (bytes.Reader received_bytes)
+    received := Packet.deserialize breader
+    // write exchange  -----------------------------------------
+    if      opcode == WRQ   and received.opcode == ACK:     start_writing (received as PacketACK)
+    else if opcode == WRQ   and received.opcode == TIMEOUT: resend_WRQ
+    else if opcode == DATA  and received.opcode == ACK:     keep_writing (received as PacketACK)
+    else if opcode == DATA  and received.opcode == TIMEOUT: resend_write
+    else if opcode == DATA  and received.opcode == ERROR:   exit_error (received as PacketERROR)
+    // WRQ packet failed --------------------------------
+    else if received.opcode == ERROR:                       exit_error (received as PacketERROR)                
+
+
+  reader_bytes -> ByteArray:
+
+
+  rrq_frame -> ByteArray:
+    cached = (PacketRRQ name mode).serialize
+    return cached
+
+  
+  // --------------------------------------------------------------------------
+
+  delay_on tries/int -> none:
+    if tries == 1: 
+      sleep --ms=1500
+      return
+    if tries == 2: 
+      sleep --ms=3000
+      return
+
 
