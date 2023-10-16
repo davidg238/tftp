@@ -1,4 +1,5 @@
 .packages/
 examples/.packages/
+example_host/.packages/
 example_seedlings/build/
 example_seedlings/.packages/

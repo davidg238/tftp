@@ -1,6 +1,6 @@
 // Copyright 2022, 2023 Ekorau LLC
 
-import device show hardware_id
+import device show hardware-id
 import gpio
 import i2c
 
@@ -11,19 +11,19 @@ import math show pow
 
 
 // Specific for ezSBC Feather.  https://github.com/EzSBC/ESP32_Feather
-BATTERY_VOLTAGE ::= 35
-BATTERY_SENSE ::= 2
-RED_LED ::= 13
+BATTERY-VOLTAGE ::= 35
+BATTERY-SENSE ::= 2
+RED-LED ::= 13
 RETRIES ::= 5
 
 // Assignable.
-WAKEUP_PIN ::= 32  // Use a pull-down resistor to pull pin 32 to ground.
+WAKEUP-PIN ::= 32  // Use a pull-down resistor to pull pin 32 to ground.
 
 class ESP32Feather:
 
-  rled := gpio.Pin RED_LED --output
-  battery_adc/Adc := Adc (gpio.Pin BATTERY_VOLTAGE)
-  battery_sense_pin := gpio.Pin BATTERY_SENSE --output  
+  rled := gpio.Pin RED-LED --output
+  battery-adc/Adc := Adc (gpio.Pin BATTERY-VOLTAGE)
+  battery-sense-pin := gpio.Pin BATTERY-SENSE --output  
   bus/i2c.Bus? := null
 
 
@@ -33,46 +33,46 @@ class ESP32Feather:
       --scl=gpio.Pin 22
     
     // init_wakeup_pin
-    battery_sense_off
-    print ".... ezSBC Feather $short_id started"
+    battery-sense-off
+    print ".... ezSBC Feather $short-id started"
 
   off:
 
-  add_i2c_device address/int -> i2c.Device:
+  add-i2c-device address/int -> i2c.Device:
     return bus.device address
 
-  red_on -> none:
+  red-on -> none:
     rled.set 0
-  red_off -> none:
+  red-off -> none:
     rled.set 1
 
-  short_id -> string:
-    return (hardware_id.stringify)[24..]
+  short-id -> string:
+    return (hardware-id.stringify)[24..]
 
-  battery_voltage -> float:
-    battery_sense_on
+  battery-voltage -> float:
+    battery-sense-on
     sleep --ms=100
-    voltage := battery_adc.get  // battery_voltage_pin.get
-    battery_sense_off
+    voltage := battery-adc.get  // battery_voltage_pin.get
+    battery-sense-off
     return voltage*2.0
 
-  battery_sense_on -> none:
-    battery_sense_pin.set 1
+  battery-sense-on -> none:
+    battery-sense-pin.set 1
 
-  battery_sense_off -> none:
-    battery_sense_pin.set 0
+  battery-sense-off -> none:
+    battery-sense-pin.set 0
 
   blink --on=250 --off=1000 -> none:
-    red_on
+    red-on
     sleep --ms=on
-    red_off
+    red-off
     sleep --ms=off
 
-init_wakeup_pin:
-  pin := gpio.Pin WAKEUP_PIN
+init-wakeup-pin:
+  pin := gpio.Pin WAKEUP-PIN
   mask := 0
   mask |= 1 << pin.num
-  esp32.enable_external_wakeup mask true
+  esp32.enable-external-wakeup mask true
 
 //  https://github.com/EzSBC/ESP32_Feather/blob/main/ESP32_Feather_Vbat_Test.ino
 

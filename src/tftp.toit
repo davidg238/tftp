@@ -1,5 +1,5 @@
 import .packets
-import .tftp_client
+import .tftp-client
 
 import .ringstore
 

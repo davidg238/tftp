@@ -1,9 +1,7 @@
 # Trivial File Transfer Protocol
 
-This is a (work in progress) implementation of [RFC 1350](https://www.rfc-editor.org/rfc/rfc1350).  
+This is an implementation of [RFC 1350](https://www.rfc-editor.org/rfc/rfc1350).  
 It has been tested against a [TFTP-GO](https://github.com/lfkeitel/tftp-go) server.  
-
-Currently only in memory data writes from the ESP32 to files on the server are supported, however this is not a limitation of the protocol.
 
 
 ### Running the code

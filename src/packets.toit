@@ -34,8 +34,8 @@ abstract class Packet:
   opcode /int := -1
 
   static deserialize reader/reader.BufferedReader -> Packet?:
-    if not reader.can_ensure 2: return PacketERROR 0 "Unknown packet"
-    opcode := decode_uint16 reader
+    if not reader.can-ensure 2: return PacketERROR 0 "Unknown packet"
+    opcode := decode-uint16 reader
     if opcode == RRQ:   return PacketRRQ.deserialize_ reader
     if opcode == WRQ:   return PacketWRQ.deserialize_ reader
     if opcode == DATA:  return PacketDATA.deserialize_ reader
@@ -44,15 +44,15 @@ abstract class Packet:
     if opcode == TIMEOUT: return PacketTIMEOUT.deserialize_ reader
     return PacketERROR 0 "Invalid opcode: $opcode"
 
-  static decode_uint16 reader/reader.BufferedReader -> int:
-    length_bytes := reader.read_bytes 2
-    return binary.BIG_ENDIAN.uint16 length_bytes 0
+  static decode-uint16 reader/reader.BufferedReader -> int:
+    length-bytes := reader.read-bytes 2
+    return binary.BIG-ENDIAN.uint16 length-bytes 0
 
   abstract payload -> ByteArray
 
   serialize -> ByteArray:
     buffer := bytes.Buffer
-    buffer.write_int16_big_endian opcode
+    buffer.write-int16-big-endian opcode
     buffer.write payload
 
     return buffer.bytes
@@ -65,16 +65,16 @@ class PacketRRQ extends Packet:
     opcode = RRQ
 
   constructor.deserialize_ reader/reader.BufferedReader:
-    filename := reader.read_until 0
-    mode := reader.read_until 0
+    filename := reader.read-until 0
+    mode := reader.read-until 0
     return PacketRRQ filename mode
 
   payload -> ByteArray:
     buffer := bytes.Buffer
-    buffer.write filename.to_byte_array
-    buffer.write_byte 0
-    buffer.write mode.to_byte_array
-    buffer.write_byte 0
+    buffer.write filename.to-byte-array
+    buffer.write-byte 0
+    buffer.write mode.to-byte-array
+    buffer.write-byte 0
     return buffer.bytes
 
 class PacketWRQ extends Packet:
@@ -85,69 +85,69 @@ class PacketWRQ extends Packet:
     opcode = WRQ
 
   constructor.deserialize_ reader/reader.BufferedReader:
-    filename := reader.read_until 0
-    mode := reader.read_until 0
+    filename := reader.read-until 0
+    mode := reader.read-until 0
     return PacketWRQ filename mode
 
   payload -> ByteArray:
     buffer := bytes.Buffer
-    buffer.write filename.to_byte_array
-    buffer.write_byte 0
-    buffer.write mode.to_byte_array
-    buffer.write_byte 0
+    buffer.write filename.to-byte-array
+    buffer.write-byte 0
+    buffer.write mode.to-byte-array
+    buffer.write-byte 0
     return buffer.bytes
 
 class PacketDATA extends Packet:
-  block_num /int?
+  block-num /int?
   data /ByteArray?
 
-  constructor .block_num .data:
+  constructor .block-num .data:
     opcode = DATA
 
   constructor.deserialize_ reader/reader.BufferedReader:
-    block_num := Packet.decode_uint16 reader
-    data := reader.read --max_size=508
-    return PacketDATA block_num data
+    block-num := Packet.decode-uint16 reader
+    data := reader.read --max-size=508
+    return PacketDATA block-num data
 
   payload -> ByteArray:
     buffer := bytes.Buffer
-    buffer.write_int16_big_endian block_num
+    buffer.write-int16-big-endian block-num
     buffer.write data
     return buffer.bytes
 
 class PacketACK extends Packet:
-  block_num /int?
+  block-num /int?
 
-  constructor .block_num:
+  constructor .block-num:
     opcode = ACK
 
   constructor.deserialize_ reader/reader.BufferedReader:
-    block_num := Packet.decode_uint16 reader
-    return PacketACK block_num
+    block-num := Packet.decode-uint16 reader
+    return PacketACK block-num
 
   payload -> ByteArray:
     buffer := bytes.Buffer
-    buffer.write_int16_big_endian block_num
+    buffer.write-int16-big-endian block-num
     return buffer.bytes
 
 
 class PacketERROR extends Packet:
-  error_code /int?
-  error_msg /string?
+  error-code /int?
+  error-msg /string?
 
-  constructor .error_code .error_msg:
+  constructor .error-code .error-msg:
     opcode = ERROR
 
   constructor.deserialize_ reader/reader.BufferedReader:
-    error_code := Packet.decode_uint16 reader
-    error_msg := reader.read_until 0
-    return PacketERROR error_code error_msg
+    error-code := Packet.decode-uint16 reader
+    error-msg := reader.read-until 0
+    return PacketERROR error-code error-msg
 
   payload -> ByteArray:
     buffer := bytes.Buffer
-    buffer.write_int16_big_endian error_code
-    buffer.write error_msg.to_byte_array
-    buffer.write_byte 0
+    buffer.write-int16-big-endian error-code
+    buffer.write error-msg.to-byte-array
+    buffer.write-byte 0
     return buffer.bytes
 
 

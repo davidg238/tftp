@@ -15,27 +15,27 @@ main:
   // set_timezone "MST7"
   board := ESP32Feather
   board.on
-  board.red_on
-  bme := bme280.Driver (board.add_i2c_device 0x77)
+  board.red-on
+  bme := bme280.Driver (board.add-i2c-device 0x77)
 
-  temp_ring := RingStore "temp" 96
-  hum_ring := RingStore "hum" 96
-  press_ring := RingStore "press" 96
+  temp-ring := RingStore "temp" 96
+  hum-ring := RingStore "hum" 96
+  press-ring := RingStore "press" 96
 
-  temp := (bme.read_temperature) * 9/5 + 32
-  temp_ring.append temp
-  hum := bme.read_humidity
-  hum_ring.append hum
-  press := bme.read_pressure/100
-  press_ring.append press
-  voltage := board.battery_voltage
+  temp := (bme.read-temperature) * 9/5 + 32
+  temp-ring.append temp
+  hum := bme.read-humidity
+  hum-ring.append hum
+  press := bme.read-pressure/100
+  press-ring.append press
+  voltage := board.battery-voltage
 
-  tmin := temp_ring.minimum
-  tmax := temp_ring.maximum
-  hmin := hum_ring.minimum
-  hmax := hum_ring.maximum
-  pmin := press_ring.minimum
-  pmax := press_ring.maximum
+  tmin := temp-ring.minimum
+  tmax := temp-ring.maximum
+  hmin := hum-ring.minimum
+  hmax := hum-ring.maximum
+  pmin := press-ring.minimum
+  pmax := press-ring.maximum
 
   print "Publishing via TFTP to $SERVER:8080.  Temperature: $(%.1f temp), Humidity: $(%.1f hum), Pressure: $(%.1f press), Voltage: $(%.3f voltage)"
   // temperature in C, humidity in %, pressure in hPa
@@ -45,10 +45,10 @@ main:
   client := TFTPClient --host=SERVER
 
   client.open
-  result := client.write_string (html tmin temp tmax hmin hum hmax pmin press pmax voltage) --name="index.html"
+  result := client.write-string (html tmin temp tmax hmin hum hmax pmin press pmax voltage) --filename="index.html"
   print "Write msg, result: $result"
   client.close
-  board.red_off
+  board.red-off
 
 html tmin/float temp/float tmax/float hmin/float hum/float hmax/float pmin/float press/float pmax/float voltage/float-> string:
   return """
@@ -86,21 +86,21 @@ html tmin/float temp/float tmax/float hmin/float hum/float hmax/float pmin/float
           <tbody>
             <tr>
               <td>Temperature</td>
-              <td>$tmin.to_int</td>
-              <td>$temp.to_int</td>
-              <td>$tmax.to_int</td>
+              <td>$tmin.to-int</td>
+              <td>$temp.to-int</td>
+              <td>$tmax.to-int</td>
             </tr>
             <tr>
               <td>Humidity</td>
-              <td>$hmin.to_int</td>
-              <td>$hum.to_int</td>
-              <td>$hmax.to_int</td>
+              <td>$hmin.to-int</td>
+              <td>$hum.to-int</td>
+              <td>$hmax.to-int</td>
             </tr>
             <tr>
               <td>Pressure</td>
-              <td>$pmin.to_int</td>
-              <td>$press.to_int</td>
-              <td>$pmax.to_int</td>
+              <td>$pmin.to-int</td>
+              <td>$press.to-int</td>
+              <td>$pmax.to-int</td>
             </tr>
           </tbody>
         </table>
