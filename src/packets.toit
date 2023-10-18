@@ -165,18 +165,16 @@ class PacketTIMEOUT extends Packet:
 
 class Result:
 
-  pass_ /bool?
+  passed /bool?
   message /string?
+  data /ByteArray? := null
 
   constructor.fail .message:
-    pass_ = false
+    passed = false
   
   constructor.pass:
-    pass_ = true
+    passed = true
     message = "complete"
-
-  passed -> bool:
-    return pass_
 
   stringify -> string:
     return message

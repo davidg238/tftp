@@ -1,10 +1,20 @@
+sdk: ^2.0.0-alpha.64
 prefixes:
+  host: pkg-host
   ntp: pkg-ntp
   tftp: ..
 packages:
   ..:
     path: ..
+    prefixes:
+      host: pkg-host
+  pkg-host:
+    url: github.com/toitlang/pkg-host
+    name: host
+    version: 1.11.0
+    hash: 7e7df6ac70d98a02f232185add81a06cec0d77e8
   pkg-ntp:
     url: github.com/toitlang/pkg-ntp
+    name: ntp
     version: 1.0.0
     hash: 1c3cc4a4819f459393f00efc576f66f838665719
