@@ -10,7 +10,7 @@ import host.file
 
 import .packets
 
-DEFAULT-BLKSIZE ::= 512
+DEFAULT-BLKSIZE ::= 508
 
 TFTP-DEFAULT-PORT ::= 69
 
@@ -29,6 +29,7 @@ class TFTPClient:
   writer_ /file.Stream? := null
   buffer_ /bytes.Buffer? := null
   streaming-reads /bool := false
+  byte-count /int := 0
 
   filename /string? := null
   mode /string? := OCTET
@@ -45,39 +46,41 @@ class TFTPClient:
     udp-socket.close  
 
 /// ----- Client API --------------------------------------------------------
-  write-string msg /string --filename -> Result:
+  write-string msg /string --filename -> int:
     return write-bytes msg.to-byte-array --filename=filename
 
-  write-bytes data/ByteArray --filename -> Result:
+  write-bytes data/ByteArray --filename -> int:
+    print "Write bytes $filename"
     areader := bytes.Reader data
     return write-stream areader --filename=filename
 
-  write-stream  areader /reader.Reader --.filename /string  -> Result:
+  write-stream  areader /reader.Reader --.filename /string  -> int:
+    print "Write stream $filename"
     mode = OCTET
     reader_ = reader.BufferedReader areader
     return write_
 
-  read-bytes .filename /string -> Result:
-    if filename.size > 128: return Result.fail "Filename too long"
-    if mode != OCTET: return Result.fail "Go server only supports Octet mode"
+  read-bytes .filename /string -> ByteArray:
+    print "Read bytes $filename"
+    if filename.size > 128: throw "Filename too long"
+    if mode != OCTET: throw "Only Octet mode supported"
     buffer_ = bytes.Buffer
     streaming-reads = false
     exchange := ClientExchange this
     exchange.read
     update-host-port_ TFTP-DEFAULT-PORT  // Reset to the default, after an exchange, to enable client reuse.
-    if exchange.result.passed:
-      exchange.result.data = buffer_.bytes
-    return exchange.result
+    return buffer_.bytes
 
-  read .filename /string --to-writer -> Result:
-    if filename.size > 128: return Result.fail "Filename too long"
-    if mode != OCTET: return Result.fail "Go server only supports Octet mode"
+  read .filename /string --to-writer -> int:
+    print "Read file $filename"
+    if filename.size > 128: throw "Filename too long"
+    if mode != OCTET: throw "Go server only supports Octet mode"
     writer_ = to-writer
     streaming-reads = true
     exchange := ClientExchange this
     exchange.read              //TODO  can this throw, should following line be in "finally"
     update-host-port_ TFTP-DEFAULT-PORT  // Reset to the default, after an exchange, to enable client reuse.
-    return exchange.result
+    return byte-count
   
 // --- methods used by ClientExchange state machine ------------------------  
   send_ payload/ByteArray -> none:
@@ -110,20 +113,24 @@ class TFTPClient:
     return reader_.buffered
 
   bytes-received data/ByteArray -> none:
+    byte-count += data.size
     if streaming-reads:
       writer_.write data
     else:
       buffer_.write-from (bytes.Reader data)
 
+  bytes-written size/int -> none:
+    byte-count += size
+
 // --------------------------------------------------------------------------
 
-  write_ -> Result:
-    if filename.size > 128: return Result.fail "Filename too long"
-    if mode != OCTET: return Result.fail "Go server only supports Octet mode"
+  write_ -> int:
+    if filename.size > 128: throw "Filename too long"
+    if mode != OCTET: throw "Only Octet mode supported"
     exchange := ClientExchange this
     exchange.write              //TODO  can this throw, should following line be in "finally"
     update-host-port_ TFTP-DEFAULT-PORT  // Reset to the default, after an exchange, to enable client reuse.
-    return exchange.result
+    return byte-count
   
 
   update-host-port_ assigned-num/int -> none:
@@ -148,7 +155,6 @@ class ClientExchange:
   cached /ByteArray := #[]
 
   block-num := 1
-  result /Result? := null
   last-frame /ByteArray := #[]
   tries := 0
   drained := false
@@ -188,23 +194,22 @@ class ClientExchange:
       tries = 0
     else:
       opcode = EXIT
-      result = Result.fail "Invalid block number for WRQ: $block-num"
+      throw "Invalid block number for WRQ: $block-num"
 
   keep-writing received /PacketACK -> none:
     if received.block-num == block-num:
       if drained:
         opcode = EXIT
-        result = Result.pass
       else:
         block-num += 1
         tries = 0
     else:
         opcode = EXIT
-        result = Result.fail "Invalid block number: $block-num"
+        throw "Invalid block number: $block-num"
   
   exit-error received /PacketERROR -> none:
     opcode = EXIT
-    result = Result.fail "Server error at blknum $block-num, error: $received.error-msg"
+    throw "Server error at blknum $block-num, error: $received.error-msg"
 
   writer-bytes -> ByteArray:
     if tries > 0: return cached
@@ -226,6 +231,7 @@ class ClientExchange:
       barray = client.bytes-to-send_ client.buffered_
       drained = true
     cached = (PacketDATA block-num barray).serialize
+    client.bytes-written barray.size
     return cached
 
 /* RRQ state machine -----------------------------------------------------
@@ -241,12 +247,14 @@ class ClientExchange:
   reader-handle received-bytes/ByteArray -> none:
     breader := reader.BufferedReader (bytes.Reader received-bytes)
     received := Packet.deserialize breader
+    print "rcvd $received"
     // write exchange  -----------------------------------------
     if      opcode == RRQ   and received.opcode == DATA:
       opcode = ACK
       read-data (received as PacketDATA)
     else if opcode == RRQ   and received.opcode == TIMEOUT: resend-last
-    else if opcode == ACK   and received.opcode == DATA:    read-data  (received as PacketDATA)
+    else if opcode == ACK   and received.opcode == DATA:
+      read-data  (received as PacketDATA)
     else if opcode == ACK   and received.opcode == TIMEOUT: resend-last
     else if opcode == ACK   and received.opcode == ERROR:   exit-error    (received as PacketERROR)
     // WRQ packet failed --------------------------------
@@ -255,15 +263,21 @@ class ClientExchange:
   reader-bytes -> ByteArray:
     if tries > 0: return cached
     if opcode == RRQ: return rrq-frame
-    if opcode == DATA: return ack-frame
+    if opcode == ACK: return ack-frame
     return (PacketERROR 0 "Invalid opcode: $opcode").serialize // Not necessary to resend an error packet, hence not cached.
 
   rrq-frame -> ByteArray:
-    cached = (PacketRRQ client.filename client.mode).serialize
+    rrq := PacketRRQ client.filename client.mode
+    print "prep $rrq"
+    cached = (rrq).serialize
     return cached
 
   ack-frame -> ByteArray:
-    cached = (PacketACK block-num).serialize
+    ack := PacketACK block-num
+    print "prep $ack"
+    cached = (ack).serialize
+    block-num += 1   // The last packet was successfully received, so prepare to receive the next packet.
+    tries = 0    
     return cached    
 
     // RRQ state machine helpers ---------------------------------------------
@@ -273,15 +287,12 @@ class ClientExchange:
       if drained:
         client.send_ ack-frame
         opcode = EXIT
-        result = Result.pass
-      else:
-        block-num += 1
-        tries = 0
     else:
         opcode = EXIT
-        result = Result.fail "Invalid block number: $block-num"
+        throw "Invalid block number: $block-num"
 
   accumulate data/ByteArray -> none:
+    print "add $data.size bytes"
     if data.size < blksize:
       drained = true
     client.bytes-received data
@@ -295,7 +306,7 @@ class ClientExchange:
       return  // The last cached frame will be resent, since not drained.
     else:
       opcode = EXIT
-      result = Result.fail "Connection to remote server timed out, blknum $block-num"
+      throw "Connection to remote server timed out, blknum $block-num"
 
   delay-on tries/int -> none:
     if tries == 1: 

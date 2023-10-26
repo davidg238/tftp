@@ -9,21 +9,15 @@ main:
 
   client.open
   
-  result := client.read-bytes "map.tison"
-  if result.passed:
-    map := tison.decode result.data
-    print "Read tison, result: $result"
-    print "Write map, result: $map"
-  else:
-    print "Read tison, result: $result"
+  read-bytes := client.read-bytes "map.tison"
+  map := tison.decode read-bytes
+  print "Write map, result: $map"
+
   
-  test_out := file.Stream.for-write "map.tison"
-  result = client.read "map.tisn" --to-writer=test-out
+  test_out := file.Stream.for-write "macbeth-read.txt"
+  count := client.read "macbeth.txt" --to-writer=test-out
   test-out.close
-  if result.passed:
-    print "Read json passed, result: $result"
-  else:
-    print "Read json, result: $result"
+  print "Read $count bytes"
 
   /*
   result = client.write (tison.encode map) --name="map.tison"

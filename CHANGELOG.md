@@ -1,3 +1,5 @@
+## 2.1.1 - 2023-10-26
+Read/write working
 
 ## 2.0.0 - 2023-10-16
 Improve api.

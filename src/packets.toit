@@ -57,6 +57,9 @@ abstract class Packet:
 
     return buffer.bytes
 
+  abstract stringify -> string
+
+
 class PacketRRQ extends Packet:
   filename /string?
   mode /string?
@@ -68,6 +71,9 @@ class PacketRRQ extends Packet:
     filename := reader.read-until 0
     mode := reader.read-until 0
     return PacketRRQ filename mode
+
+  stringify -> string:
+    return "RRQ | $filename | $mode"
 
   payload -> ByteArray:
     buffer := bytes.Buffer
@@ -89,6 +95,10 @@ class PacketWRQ extends Packet:
     mode := reader.read-until 0
     return PacketWRQ filename mode
 
+  stringify -> string:
+    return "WRQ | $filename | $mode"
+  
+
   payload -> ByteArray:
     buffer := bytes.Buffer
     buffer.write filename.to-byte-array
@@ -109,6 +119,10 @@ class PacketDATA extends Packet:
     data := reader.read --max-size=508
     return PacketDATA block-num data
 
+  stringify -> string:
+    return "DATA | $block-num | $data.size bytes"
+  
+
   payload -> ByteArray:
     buffer := bytes.Buffer
     buffer.write-int16-big-endian block-num
@@ -124,6 +138,10 @@ class PacketACK extends Packet:
   constructor.deserialize_ reader/reader.BufferedReader:
     block-num := Packet.decode-uint16 reader
     return PacketACK block-num
+
+  stringify -> string:
+    return "ACK | $block-num"
+  
 
   payload -> ByteArray:
     buffer := bytes.Buffer
@@ -143,6 +161,9 @@ class PacketERROR extends Packet:
     error-msg := reader.read-until 0
     return PacketERROR error-code error-msg
 
+  stringify -> string:
+    return "ERROR | $error-code | $error-msg"
+  
   payload -> ByteArray:
     buffer := bytes.Buffer
     buffer.write-int16-big-endian error-code
@@ -162,6 +183,9 @@ class PacketTIMEOUT extends Packet:
   payload -> ByteArray:
     return #[]
 
+  stringify -> string:
+    return "TIMEOUT"
+  
 
 class Result:
 

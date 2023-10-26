@@ -10,14 +10,14 @@ main:
   client := TFTPClient --host=SERVER
 
   client.open
-  result := client.write-string msg --filename="example.html"
-  print "Write msg, result: $result"
+  result := client.write-string msg --filename="./inputs/example.html"
+  print "Write msg, written $result"
 
-  result = client.write-bytes (json.encode map) --filename="map.json"
-  print "Write json, result: $result"
+  result = client.write-bytes (json.encode map) --filename="./inputs/map.json"
+  print "Write json, written $result"
 
-  result = client.write-bytes (tison.encode map) --filename="map.tison"
-  print "Write tison, result: $result"
+  result = client.write-bytes (tison.encode map) --filename="./inputs/map.tison"
+  print "Write tison, written $result"
   client.close
 
 msg := "Hello World!"
