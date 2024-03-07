@@ -1,7 +1,14 @@
-sdk: ^2.0.0-alpha.64
+sdk: ^2.0.0-alpha.79
 prefixes:
+  host: pkg-host
+  http: pkg-http
   test: pkg-test
+  tftp: ..
 packages:
+  ..:
+    path: ..
+    prefixes:
+      host: pkg-host
   pkg-cli:
     url: github.com/toitlang/pkg-cli
     name: cli
@@ -12,6 +19,11 @@ packages:
     name: host
     version: 1.11.0
     hash: 7e7df6ac70d98a02f232185add81a06cec0d77e8
+  pkg-http:
+    url: github.com/toitlang/pkg-http
+    name: http
+    version: 2.3.4
+    hash: 39fe52083b4c745cc37420649a48277b45728fd2
   pkg-tar:
     url: github.com/toitlang/pkg-tar
     name: tar

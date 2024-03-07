@@ -1,4 +1,6 @@
 .packages/
 examples/.packages/
+examples/temp/
 examples/outputs/
 example_seedlings/.packages/
+tests/temp/

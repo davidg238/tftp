@@ -1,4 +1,4 @@
-// Copyright 2023 Ekorau LLC
+// Copyright 2023, 2024 Ekorau LLC
 
 import bytes
 import reader
@@ -6,14 +6,18 @@ import writer
 import binary
 import net
 import net.udp
-import host.file
+
+import crypto.sha256
+import encoding.hex
 
 import .packets
 
-DEFAULT-BLKSIZE ::= 508
-
 TFTP-DEFAULT-PORT ::= 69
 
+/** 
+The client class to a remote TFTP server.
+
+*/
 class TFTPClient:
   host /string?
   host-address /net.IpAddress?
@@ -26,10 +30,11 @@ class TFTPClient:
 
   blksize := DEFAULT-BLKSIZE
   reader_ /reader.BufferedReader? := null
-  writer_ /file.Stream? := null
+  writer_ /writer.Writer? := null
   buffer_ /bytes.Buffer? := null
   streaming-reads /bool := false
-  byte-count /int := 0
+  xfer-result /TFTP-Result? := null
+  byte-count := 0
 
   filename /string? := null
   mode /string? := OCTET
@@ -45,23 +50,29 @@ class TFTPClient:
   close -> none:
     udp-socket.close  
 
-/// ----- Client API --------------------------------------------------------
+  /** 
+  Write the $msg to the remote server, with the $filename.
+  */
   write-string msg /string --filename -> int:
     return write-bytes msg.to-byte-array --filename=filename
 
+  /** 
+  Write the $data to the remote server, with the $filename.
+  */
   write-bytes data/ByteArray --filename -> int:
-    print "Write bytes $filename"
     areader := bytes.Reader data
     return write-stream areader --filename=filename
 
+  /** 
+  Write the $areader content to the remote server, with the $filename.
+  */
   write-stream  areader /reader.Reader --.filename /string  -> int:
-    print "Write stream $filename"
     mode = OCTET
     reader_ = reader.BufferedReader areader
+    xfer-result = TFTP-Result filename
     return write_
 
   read-bytes .filename /string -> ByteArray:
-    print "Read bytes $filename"
     if filename.size > 128: throw "Filename too long"
     if mode != OCTET: throw "Only Octet mode supported"
     buffer_ = bytes.Buffer
@@ -72,7 +83,8 @@ class TFTPClient:
     return buffer_.bytes
 
   read .filename /string --to-writer -> int:
-    print "Read file $filename"
+    byte-count = 0
+    // print "Read file $filename"
     if filename.size > 128: throw "Filename too long"
     if mode != OCTET: throw "Go server only supports Octet mode"
     writer_ = to-writer
@@ -82,7 +94,6 @@ class TFTPClient:
     update-host-port_ TFTP-DEFAULT-PORT  // Reset to the default, after an exchange, to enable client reuse.
     return byte-count
   
-// --- methods used by ClientExchange state machine ------------------------  
   send_ payload/ByteArray -> none:
     msg := udp.Datagram payload host-SocketAddress
     udp-socket.send msg
@@ -97,7 +108,7 @@ class TFTPClient:
       to := PacketTIMEOUT
       return to.serialize
     else:
-      other := PacketERROR 0 exception.message
+      other := PacketERROR 0 exception
       return other.serialize
       
   can-ensure_ size/int -> bool:
@@ -122,9 +133,9 @@ class TFTPClient:
   bytes-written size/int -> none:
     byte-count += size
 
-// --------------------------------------------------------------------------
 
   write_ -> int:
+    byte-count = 0
     if filename.size > 128: throw "Filename too long"
     if mode != OCTET: throw "Only Octet mode supported"
     exchange := ClientExchange this
@@ -137,8 +148,7 @@ class TFTPClient:
     port = assigned-num
     host-SocketAddress = net.SocketAddress host-address port
 
-// --------------------------------------------------------------------------    
-/*
+/**
 Correct client exchanges comprise a series of handshakes:
   WRQ:ACK, (DATA:ACK)+
   RRQ:DATA, (ACK:DATA)+
@@ -147,7 +157,6 @@ Correct client exchanges comprise a series of handshakes:
   Receiving a packet with an invalid block number aborts the transfer.
   On timeout, the client should retry the last packet up to 3 times, then abort the transfer.
   The timeout is 5 seconds.
-
 */
 class ClientExchange:
 
@@ -164,9 +173,9 @@ class ClientExchange:
 
   constructor .client /TFTPClient:
 
-  /* 
+  /** 
   There is only one outstanding request at a time.
-  This is the exchange entry point, so the opcode has been set for read or write.
+  This is the exchange entry point, the opcode is set for write.
   */
   write -> none:
     opcode = WRQ
@@ -174,7 +183,7 @@ class ClientExchange:
       client.send_ writer-bytes
       writer-handle client.receive_
 
-  // WRQ state machine -----------------------------------------------------
+  /** WRQ state machine */
   writer-handle received-bytes/ByteArray -> none:
     breader := reader.BufferedReader (bytes.Reader received-bytes)
     received := Packet.deserialize breader
@@ -247,7 +256,8 @@ class ClientExchange:
   reader-handle received-bytes/ByteArray -> none:
     breader := reader.BufferedReader (bytes.Reader received-bytes)
     received := Packet.deserialize breader
-    print "rcvd $received"
+    sleep --ms=5
+    // print "rcvd $received"
     // write exchange  -----------------------------------------
     if      opcode == RRQ   and received.opcode == DATA:
       opcode = ACK
@@ -268,13 +278,13 @@ class ClientExchange:
 
   rrq-frame -> ByteArray:
     rrq := PacketRRQ client.filename client.mode
-    print "prep $rrq"
+    // print "prep $rrq"
     cached = (rrq).serialize
     return cached
 
   ack-frame -> ByteArray:
     ack := PacketACK block-num
-    print "prep $ack"
+    // print "prep $ack"
     cached = (ack).serialize
     block-num += 1   // The last packet was successfully received, so prepare to receive the next packet.
     tries = 0    
@@ -282,6 +292,7 @@ class ClientExchange:
 
     // RRQ state machine helpers ---------------------------------------------
   read-data received /PacketDATA -> none:
+    if received.block-num % 1000 == 0: print "rcvd $received.block-num blocks"
     if received.block-num == block-num:
       accumulate received.data
       if drained:
@@ -292,7 +303,7 @@ class ClientExchange:
         throw "Invalid block number: $block-num"
 
   accumulate data/ByteArray -> none:
-    print "add $data.size bytes"
+    // print "add $data.size bytes"
     if data.size < blksize:
       drained = true
     client.bytes-received data
@@ -316,8 +327,42 @@ class ClientExchange:
       sleep --ms=3000
       return
 
+/** 
+Summarize the TFTP transfer.
+*/
+class TFTP-Result:
+  filename /string
+  passed /bool := false
+  to-server /bool := false
+  data /ByteArray := #[]
+  message /string := ""
+  count /int := 0
+  blocksize /int := 0
+  checksum /string  := ""
+  retries /int := 0
 
+  constructor .filename /string:
 
+  stringify -> string:
+    xfer := to-server ? "sent" : "received"
+    return passed?
+      "TFTP $filename $xfer, bytes $count, retries $retries, checksum $checksum":
+      "TFTP $filename $xfer failed, bytes $count at block , retries $retries, checksum $checksum"
+
+/**
+Calculates the SHA256 sum of the data transfered.
+*/
+class TransferCheck:
+  count := 0
+  summer_ := sha256.Sha256
+
+  transfer data /ByteArray -> int:
+    summer_.add data
+    count += data.size
+    return data.size
+
+  sha256sum -> string:
+    return hex.encode summer_.get
 
 /*
   start-reading received /PacketDATA -> none:

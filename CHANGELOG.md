@@ -1,3 +1,6 @@
+## 2.2.0 - 2024-03-06
+Improve tests
+
 ## 2.1.1 - 2023-10-26
 Read/write working
 

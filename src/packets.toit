@@ -9,11 +9,18 @@ WRQ ::= 0x02
 DATA ::= 0x03
 ACK ::= 0x04
 ERROR ::= 0x05
-OPACK ::= 0x06 // Option acknowledgement
+/** Option acknowledgement */
+OPACK ::= 0x06 
+/** $UNKNOWN is not a TFTP opcode, it is used internally to indicate an unknown opcode. */
+UNKNOWN ::= 0x0D
+/** $TIMEOUT is not a TFTP opcode, it is used internally to indicate a timeout. */
+TIMEOUT ::= 0x0E 
+/** $EXIT is not a TFTP opcode, it is used internally to indicate the client has exited. */
+EXIT ::= 0x0F 
 
-UNKNOWN ::= 0x0D // This is not a TFTP opcode, it is used internally to indicate an unknown opcode.
-TIMEOUT ::= 0x0E // This is not a TFTP opcode, it is used internally to indicate a timeout.
-EXIT ::= 0x0F // This is not a TFTP opcode, it is used internally to indicate exchange terminations.
+
+DEFAULT-BLKSIZE ::= 512
+
 
 NETASCII ::= "netascii"
 OCTET ::= "octet"
@@ -29,7 +36,10 @@ ERRORS ::= [
   "File already exists.",
   "No such user."
 ]
-
+/**
+Packet is the abstract superclass of all TFTP packets.
+Has the factory method $deserialize to return the correct packet type from the reader stream.
+*/
 abstract class Packet:
   opcode /int := -1
 
@@ -59,7 +69,9 @@ abstract class Packet:
 
   abstract stringify -> string
 
-
+/**
+PacketRRQ is a read request packet, sent from the client to the server to initiate a read.
+*/
 class PacketRRQ extends Packet:
   filename /string?
   mode /string?
@@ -83,6 +95,9 @@ class PacketRRQ extends Packet:
     buffer.write-byte 0
     return buffer.bytes
 
+/**
+PacketWRQ is a write request packet, sent from the client to the server to initiate a write.
+*/
 class PacketWRQ extends Packet:
   filename /string?
   mode /string?
@@ -107,6 +122,9 @@ class PacketWRQ extends Packet:
     buffer.write-byte 0
     return buffer.bytes
 
+/**
+PacketDATA form the payload packets.
+*/
 class PacketDATA extends Packet:
   block-num /int?
   data /ByteArray?
@@ -116,7 +134,7 @@ class PacketDATA extends Packet:
 
   constructor.deserialize_ reader/reader.BufferedReader:
     block-num := Packet.decode-uint16 reader
-    data := reader.read --max-size=508
+    data := reader.read --max-size=DEFAULT-BLKSIZE  //TODO: max-size should be configurable
     return PacketDATA block-num data
 
   stringify -> string:
@@ -129,6 +147,9 @@ class PacketDATA extends Packet:
     buffer.write data
     return buffer.bytes
 
+/**
+PacketACK are the acknowledgement packets, used by client and server.
+*/
 class PacketACK extends Packet:
   block-num /int?
 
@@ -148,7 +169,9 @@ class PacketACK extends Packet:
     buffer.write-int16-big-endian block-num
     return buffer.bytes
 
-
+/**
+PacketERROR are the error packets, used by client and server.
+*/
 class PacketERROR extends Packet:
   error-code /int?
   error-msg /string?
@@ -172,7 +195,10 @@ class PacketERROR extends Packet:
     return buffer.bytes
 
 
-// Not a real TFTPPacket, but used to signal a timeout has occured and to resend last packet.
+/** 
+PacketTIMEOUT is not a TFTP packet, rather an internal synthetic packet type, used to signal a timeout has occured and to resend last packet.
+It simplifies the protocol engine implementation by allowing the protocol engine to treat timeouts as a packet type.
+*/
 class PacketTIMEOUT extends Packet:
   constructor:
     opcode = TIMEOUT
@@ -187,18 +213,3 @@ class PacketTIMEOUT extends Packet:
     return "TIMEOUT"
   
 
-class Result:
-
-  passed /bool?
-  message /string?
-  data /ByteArray? := null
-
-  constructor.fail .message:
-    passed = false
-  
-  constructor.pass:
-    passed = true
-    message = "complete"
-
-  stringify -> string:
-    return message
