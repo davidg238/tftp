@@ -1,4 +1,4 @@
-# TFTP SDK Upgrade Summary, v2.1.2
+# TFTP SDK Upgrade Summary, v2.2.1
 
 ## Issues Fixed
 
