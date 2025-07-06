@@ -1,9 +1,9 @@
 dependencies:
   host:
     url: github.com/toitlang/pkg-host
-    version: ^1.11.0
+    version: ^1.16.2
   ntp:
     url: github.com/toitlang/pkg-ntp
-    version: ^1.0.0
+    version: ^1.1.0
   tftp:
     path: ..

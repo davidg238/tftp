@@ -1,7 +1,9 @@
 // Copyright 2023 Ekorau LLC
 
 import bytes
-import reader
+import io.reader show Reader 
+import io show BIG-ENDIAN
+import io.buffer show Buffer
 import binary
 
 RRQ ::= 0x01
@@ -43,8 +45,8 @@ Has the factory method $deserialize to return the correct packet type from the r
 abstract class Packet:
   opcode /int := -1
 
-  static deserialize reader/reader.BufferedReader -> Packet?:
-    if not reader.can-ensure 2: return PacketERROR 0 "Unknown packet"
+  static deserialize reader/Reader -> Packet?:
+    if not reader.content-size >= 2: return PacketERROR 0 "Unknown packet"
     opcode := decode-uint16 reader
     if opcode == RRQ:   return PacketRRQ.deserialize_ reader
     if opcode == WRQ:   return PacketWRQ.deserialize_ reader
@@ -54,15 +56,15 @@ abstract class Packet:
     if opcode == TIMEOUT: return PacketTIMEOUT.deserialize_ reader
     return PacketERROR 0 "Invalid opcode: $opcode"
 
-  static decode-uint16 reader/reader.BufferedReader -> int:
+  static decode-uint16 reader/Reader -> int:
     length-bytes := reader.read-bytes 2
-    return binary.BIG-ENDIAN.uint16 length-bytes 0
+    return BIG-ENDIAN.uint16 length-bytes 0
 
   abstract payload -> ByteArray
 
   serialize -> ByteArray:
-    buffer := bytes.Buffer
-    buffer.write-int16-big-endian opcode
+    buffer := Buffer
+    buffer.big-endian.write-int16 opcode
     buffer.write payload
 
     return buffer.bytes
@@ -79,16 +81,16 @@ class PacketRRQ extends Packet:
   constructor .filename .mode:
     opcode = RRQ
 
-  constructor.deserialize_ reader/reader.BufferedReader:
-    filename := reader.read-until 0
-    mode := reader.read-until 0
+  constructor.deserialize_ reader/Reader:
+    filename := reader.read-string-up-to 0
+    mode := reader.read-string-up-to 0
     return PacketRRQ filename mode
 
   stringify -> string:
     return "RRQ | $filename | $mode"
 
   payload -> ByteArray:
-    buffer := bytes.Buffer
+    buffer := Buffer
     buffer.write filename.to-byte-array
     buffer.write-byte 0
     buffer.write mode.to-byte-array
@@ -105,9 +107,9 @@ class PacketWRQ extends Packet:
   constructor .filename .mode:
     opcode = WRQ
 
-  constructor.deserialize_ reader/reader.BufferedReader:
-    filename := reader.read-until 0
-    mode := reader.read-until 0
+  constructor.deserialize_ reader/Reader:
+    filename := reader.read-string-up-to 0
+    mode := reader.read-string-up-to 0
     return PacketWRQ filename mode
 
   stringify -> string:
@@ -115,7 +117,7 @@ class PacketWRQ extends Packet:
   
 
   payload -> ByteArray:
-    buffer := bytes.Buffer
+    buffer := Buffer
     buffer.write filename.to-byte-array
     buffer.write-byte 0
     buffer.write mode.to-byte-array
@@ -132,7 +134,7 @@ class PacketDATA extends Packet:
   constructor .block-num .data:
     opcode = DATA
 
-  constructor.deserialize_ reader/reader.BufferedReader:
+  constructor.deserialize_ reader/Reader:
     block-num := Packet.decode-uint16 reader
     data := reader.read --max-size=DEFAULT-BLKSIZE  //TODO: max-size should be configurable
     return PacketDATA block-num data
@@ -142,8 +144,8 @@ class PacketDATA extends Packet:
   
 
   payload -> ByteArray:
-    buffer := bytes.Buffer
-    buffer.write-int16-big-endian block-num
+    buffer := Buffer
+    buffer.big-endian.write-int16 block-num
     buffer.write data
     return buffer.bytes
 
@@ -156,7 +158,7 @@ class PacketACK extends Packet:
   constructor .block-num:
     opcode = ACK
 
-  constructor.deserialize_ reader/reader.BufferedReader:
+  constructor.deserialize_ reader/Reader:
     block-num := Packet.decode-uint16 reader
     return PacketACK block-num
 
@@ -165,8 +167,8 @@ class PacketACK extends Packet:
   
 
   payload -> ByteArray:
-    buffer := bytes.Buffer
-    buffer.write-int16-big-endian block-num
+    buffer := Buffer
+    buffer.big-endian.write-int16 block-num
     return buffer.bytes
 
 /**
@@ -179,17 +181,17 @@ class PacketERROR extends Packet:
   constructor .error-code .error-msg:
     opcode = ERROR
 
-  constructor.deserialize_ reader/reader.BufferedReader:
+  constructor.deserialize_ reader/Reader:
     error-code := Packet.decode-uint16 reader
-    error-msg := reader.read-until 0
+    error-msg := reader.read-string-up-to 0
     return PacketERROR error-code error-msg
 
   stringify -> string:
     return "ERROR | $error-code | $error-msg"
   
   payload -> ByteArray:
-    buffer := bytes.Buffer
-    buffer.write-int16-big-endian error-code
+    buffer := Buffer
+    buffer.big-endian.write-int16 error-code
     buffer.write error-msg.to-byte-array
     buffer.write-byte 0
     return buffer.bytes
@@ -203,7 +205,7 @@ class PacketTIMEOUT extends Packet:
   constructor:
     opcode = TIMEOUT
 
-  constructor.deserialize_ reader/reader.BufferedReader:
+  constructor.deserialize_ reader/Reader:
     return PacketTIMEOUT
 
   payload -> ByteArray:

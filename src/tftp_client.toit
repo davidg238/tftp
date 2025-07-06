@@ -1,9 +1,10 @@
 // Copyright 2023, 2024 Ekorau LLC
 
 import bytes
-import reader
-import writer
 import binary
+import io.buffer show Buffer
+import io.reader show Reader
+import io.writer show Writer
 import net
 import net.udp
 
@@ -29,9 +30,9 @@ class TFTPClient:
   packet-id := 0
 
   blksize := DEFAULT-BLKSIZE
-  reader_ /reader.BufferedReader? := null
-  writer_ /writer.Writer? := null
-  buffer_ /bytes.Buffer? := null
+  reader_ /Reader? := null
+  writer_ /Writer? := null
+  buffer_ /Buffer? := null
   streaming-reads /bool := false
   xfer-result /TFTP-Result? := null
   byte-count := 0
@@ -60,32 +61,38 @@ class TFTPClient:
   Write the $data to the remote server, with the $filename.
   */
   write-bytes data/ByteArray --filename -> int:
-    areader := bytes.Reader data
+    areader := Reader data
     return write-stream areader --filename=filename
 
   /** 
   Write the $areader content to the remote server, with the $filename.
   */
-  write-stream  areader /reader.Reader --.filename /string  -> int:
+  write-stream  areader /Reader --filename /string  -> int:
     mode = OCTET
-    reader_ = reader.BufferedReader areader
+    if filename == null: throw "Filename is required"
+    filename = filename.trim
+    reader_ = areader
     xfer-result = TFTP-Result filename
     return write_
 
-  read-bytes .filename /string -> ByteArray:
-    if filename.size > 128: throw "Filename too long"
+  read-bytes afilename /string -> ByteArray:
+    if afilename == null: throw "Filename is required"
+    if afilename.size > 128: throw "Filename too long"
     if mode != OCTET: throw "Only Octet mode supported"
-    buffer_ = bytes.Buffer
+    filename = afilename.trim
+    buffer_ = Buffer
     streaming-reads = false
     exchange := ClientExchange this
     exchange.read
     update-host-port_ TFTP-DEFAULT-PORT  // Reset to the default, after an exchange, to enable client reuse.
     return buffer_.bytes
 
-  read .filename /string --to-writer -> int:
+  read afilename /string --to-writer -> int:
     byte-count = 0
     // print "Read file $filename"
-    if filename.size > 128: throw "Filename too long"
+    if afilename == null: throw "Filename is required"
+    if afilename.size > 128: throw "Filename too long"
+    filename = afilename.trim
     if mode != OCTET: throw "Go server only supports Octet mode"
     writer_ = to-writer
     streaming-reads = true
@@ -185,7 +192,7 @@ class ClientExchange:
 
   /** WRQ state machine */
   writer-handle received-bytes/ByteArray -> none:
-    breader := reader.BufferedReader (bytes.Reader received-bytes)
+    breader := Reader received-bytes
     received := Packet.deserialize breader
     // write exchange  -----------------------------------------
     if      opcode == WRQ   and received.opcode == ACK:     start-writing (received as PacketACK)

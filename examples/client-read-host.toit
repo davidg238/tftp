@@ -3,7 +3,7 @@
 import tftp show TFTPClient
 import encoding.json
 import encoding.tison
-import writer
+import io.writer show Writer
 import host.file 
 SERVER ::= "192.168.0.217"  // pidev
 
@@ -15,7 +15,7 @@ main:
   filename := "macbeth.txt"
   print "read $filename from server"
   test_out := file.Stream.for-write "./temp/$filename"
-  count := client.read filename --to-writer=(writer.Writer test-out)
+  count := client.read filename --to-writer=test-out
   test-out.close
   print "Read $count bytes"
 

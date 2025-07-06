@@ -1,4 +1,4 @@
-sdk: ^2.0.0-alpha.79
+sdk: ^2.0.0-alpha.170
 prefixes:
   host: pkg-host
   http: pkg-http
@@ -12,28 +12,38 @@ packages:
   pkg-cli:
     url: github.com/toitlang/pkg-cli
     name: cli
-    version: 1.2.0
-    hash: 0e2adab3ab434c597be60438ccf64008f703ad9c
+    version: 1.8.0
+    hash: 73c8aabb60a6f5f304566a1e781d7b025aa17e9b
+    prefixes:
+      fs: pkg-fs
+      host: pkg-host
+  pkg-fs:
+    url: github.com/toitlang/pkg-fs
+    name: fs
+    version: 2.3.1
+    hash: 60836d4500317af2093d59d50c117d612c33f1fa
+    prefixes:
+      host: pkg-host
   pkg-host:
     url: github.com/toitlang/pkg-host
     name: host
-    version: 1.11.0
-    hash: 7e7df6ac70d98a02f232185add81a06cec0d77e8
+    version: 1.16.2
+    hash: ae83f761db80166a20bb38498edd009916b72563
   pkg-http:
     url: github.com/toitlang/pkg-http
     name: http
-    version: 2.3.4
-    hash: 39fe52083b4c745cc37420649a48277b45728fd2
+    version: 2.9.0
+    hash: ed6e198259c578154de830dc492821fdb5a40c7a
   pkg-tar:
     url: github.com/toitlang/pkg-tar
     name: tar
-    version: 1.0.0
-    hash: 72f9f1318b03300657dee12c8cfac72413ca1b56
+    version: 1.2.0
+    hash: fa4667de1073976a343f5816ddcea291e4cbf4ff
   pkg-test:
     url: github.com/mikkeldamsgaard/pkg-test
     name: test
-    version: 1.0.3
-    hash: c3a5bba08f56e270372b13415d24b18b4ca34e83
+    version: 1.1.0
+    hash: 77903612139a85c3f3e4e71cfd82de3013af72dc
     prefixes:
       cli: pkg-cli
       host: pkg-host
