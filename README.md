@@ -8,10 +8,10 @@ It has been tested against a [TFTP-GO](https://github.com/lfkeitel/tftp-go) serv
 - Determine why writing is considerably faster than reading.
 
 ### Running the tests
-A test server is required, I found it convenient to have a dedicated Raspberry Pi available.  
+A test server is required, assumed to be on the development machine, at `localhost`.  
 
 1. On the test server:  
-  - Install the TFTP-GO server on the RPi, for example in a `/tftp-go` directory in the root.
+  - Install the TFTP-GO server, for example in a `/tftp-go` directory in the root.
   - Create an `assets` directory in the root directory.  Then create a `/assets/temp` directory.
   - The command below runs a server, serving files out of the `../assets` directory and allowing files to be overwritten (great to testing).  
     `sudo ./tftp-go -root ../assets -ow -server`
@@ -20,7 +20,7 @@ A test server is required, I found it convenient to have a dedicated Raspberry P
 2. On your development machine:  
   - Install TFTP-GO as a transport mechanism.
   - Change into the `TFTP/tests` directory and copy the `sha_serve.py` file to the test server with something like:
-    `~/apps/tftp-go/tftp-go put 192.168.0.217:sha_serve.py ./sha_serve.py`
+    `~/apps/tftp-go/tftp-go put localhost:sha_serve.py ./sha_serve.py`
   - Run the `assets_populate.sh` script to copy all the assets from your development machine to the test server, adjusting for your setup.  
     You should see something like:  
 ```
