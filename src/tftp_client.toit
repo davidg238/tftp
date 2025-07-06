@@ -5,6 +5,7 @@ import binary
 import io.buffer show Buffer
 import io.reader show Reader
 import io.writer show Writer
+import io
 import net
 import net.udp
 
@@ -37,7 +38,7 @@ class TFTPClient:
   xfer-result /TFTP-Result? := null
   byte-count := 0
 
-  filename /string? := null
+  filename_ /string? := null
   mode /string? := OCTET
 
   constructor --.host:
@@ -70,16 +71,16 @@ class TFTPClient:
   write-stream  areader /Reader --filename /string  -> int:
     mode = OCTET
     if filename == null: throw "Filename is required"
-    filename = filename.trim
+    filename_ = filename.trim
     reader_ = areader
-    xfer-result = TFTP-Result filename
+    xfer-result = TFTP-Result filename_
     return write_
 
   read-bytes afilename /string -> ByteArray:
     if afilename == null: throw "Filename is required"
     if afilename.size > 128: throw "Filename too long"
     if mode != OCTET: throw "Only Octet mode supported"
-    filename = afilename.trim
+    filename_ = afilename.trim
     buffer_ = Buffer
     streaming-reads = false
     exchange := ClientExchange this
@@ -89,10 +90,10 @@ class TFTPClient:
 
   read afilename /string --to-writer -> int:
     byte-count = 0
-    // print "Read file $filename"
+    // print "Read file $filename_"
     if afilename == null: throw "Filename is required"
     if afilename.size > 128: throw "Filename too long"
-    filename = afilename.trim
+    filename_ = afilename.trim
     if mode != OCTET: throw "Go server only supports Octet mode"
     writer_ = to-writer
     streaming-reads = true
@@ -119,23 +120,27 @@ class TFTPClient:
       return other.serialize
       
   can-ensure_ size/int -> bool:
-    return reader_.can-ensure size
+    // Not used in streaming approach
+    return true
 
   bytes-to-send_ size/int -> ByteArray:
-    return reader_.read-bytes size
+    // For streaming, read up to 'size' bytes, but don't fail if fewer are available
+    return reader_.read --max-size=size
 
   buffer-all_ -> none:
-    reader_.buffer-all
+    // Not used in streaming approach
+    // Do nothing
 
   buffered_ -> int:
-    return reader_.buffered
+    // Not used in streaming approach
+    return 0
 
   bytes-received data/ByteArray -> none:
     byte-count += data.size
     if streaming-reads:
       writer_.write data
     else:
-      buffer_.write-from (bytes.Reader data)
+      buffer_.write-from (io.Reader data)
 
   bytes-written size/int -> none:
     byte-count += size
@@ -143,7 +148,7 @@ class TFTPClient:
 
   write_ -> int:
     byte-count = 0
-    if filename.size > 128: throw "Filename too long"
+    if filename_.size > 128: throw "Filename too long"
     if mode != OCTET: throw "Only Octet mode supported"
     exchange := ClientExchange this
     exchange.write              //TODO  can this throw, should following line be in "finally"
@@ -234,17 +239,14 @@ class ClientExchange:
     return (PacketERROR 0 "Invalid opcode: $opcode").serialize // Not necessary to resend an error packet, hence not cached.
 
   wrq-frame -> ByteArray:
-    cached = (PacketWRQ client.filename client.mode).serialize
+    cached = (PacketWRQ client.filename_ client.mode).serialize
     return cached
 
   next-send-frame -> ByteArray:
-    barray := #[]
-    if client.can-ensure_ blksize:
-      barray = client.bytes-to-send_ blksize
-    else:
-      client.buffer-all_
-      // if reader.buffered == 0: return null  // already called has_more_data, refer https://libs.toit.io/#read_bytes(1%2C0%2C0%2C)
-      barray = client.bytes-to-send_ client.buffered_
+    // For streaming, just try to read up to blksize bytes
+    // If we get fewer bytes, we know we're at the end
+    barray := client.bytes-to-send_ blksize
+    if barray.size < blksize:
       drained = true
     cached = (PacketDATA block-num barray).serialize
     client.bytes-written barray.size
@@ -261,8 +263,7 @@ class ClientExchange:
       reader-handle client.receive_
 
   reader-handle received-bytes/ByteArray -> none:
-    breader := reader.BufferedReader (bytes.Reader received-bytes)
-    received := Packet.deserialize breader
+    received := Packet.deserialize (io.Reader received-bytes)
     sleep --ms=5
     // print "rcvd $received"
     // write exchange  -----------------------------------------
@@ -284,7 +285,7 @@ class ClientExchange:
     return (PacketERROR 0 "Invalid opcode: $opcode").serialize // Not necessary to resend an error packet, hence not cached.
 
   rrq-frame -> ByteArray:
-    rrq := PacketRRQ client.filename client.mode
+    rrq := PacketRRQ client.filename_ client.mode
     // print "prep $rrq"
     cached = (rrq).serialize
     return cached

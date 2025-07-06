@@ -4,12 +4,13 @@ import tftp show TFTPClient SHA256Summer SDCard
 import encoding.json
 import encoding.hex
 import host.file
-import writer
+import io.writer show Writer
+import io
 import http
 import net
 import gpio
 
-SERVER ::= "192.168.0.217"
+SERVER ::= "127.0.0.1"
 
 main:
   client := TFTPClient --host=SERVER
@@ -36,12 +37,12 @@ main:
   map-svr.remove "openwrt-23.05.0-ath79-generic-openmesh_om2p-hs-v1-initramfs-kernel.bin"
 
   summer := SHA256Summer
-  sha-writer := writer.Writer summer
+  sha-writer := summer
 
 // Write the set of files from the server to SDcard
   map-svr.do : | key value| 
     filer := sdcard.openw "/sd/$key"
-    count := client.read key --to-writer=(writer.Writer filer)
+    count := client.read key --to-writer=filer.out
     filer.close
     print "Wrote $key to SDcard, $count bytes"
 
@@ -51,10 +52,10 @@ main:
   result := true
   map-svr.do : | key value| 
     filer := sdcard.openr "/sd/$key"
-    bytes := filer.read
+    bytes := filer.in.read
     while bytes != null:
       sha-writer.write bytes
-      bytes = filer.read
+      bytes = filer.in.read
     filer.close
 
     sha256sum := summer.sum

@@ -3,11 +3,12 @@
 import tftp show TFTPClient SDCard
 import encoding.json
 import encoding.tison
-import writer
+import io.writer show Writer
+import io
 import host.file
 import gpio
 
-SERVER ::= "192.168.0.217"  // pidev
+SERVER ::= "127.0.0.1"  // localhost
 
 main:
   client := TFTPClient --host=SERVER
@@ -23,7 +24,7 @@ main:
   filer := sdcard.openw "/sd/$filename"
 
   print "read $filename from server"
-  count := client.read filename --to-writer=(writer.Writer filer)
+  count := client.read filename --to-writer=filer.out
   filer.close
   print "Read $count bytes"
 

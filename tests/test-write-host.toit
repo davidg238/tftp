@@ -4,11 +4,12 @@ import tftp show TFTPClient SHA256Summer
 import encoding.json
 import encoding.hex
 import host.file
-import writer
+import io.writer show Writer
+import io
 import http
 import net
 
-SERVER ::= "192.168.0.217"
+SERVER ::= "127.0.0.1"
 
 main:
   client := TFTPClient --host=SERVER
@@ -16,18 +17,18 @@ main:
   client.open
 
   open_file := file.Stream.for_read "./assets.json"
-  byte_array := open_file.read
+  byte_array := open_file.in.read
   map := json.decode byte-array
   open-file.close
 
   summer := SHA256Summer
-  sha-writer := writer.Writer summer
+  sha-writer := summer
 
 // Write the set of files to the server
   map.do : | key value| 
     inputfile := "../assets/$key"
     reader := file.Stream.for-read inputfile
-    count := client.write-stream reader --filename="./temp/$key"
+    count := client.write-stream reader.in --filename="./temp/$key"
     reader.close
     print "Wrote $key to server, $count bytes"
 

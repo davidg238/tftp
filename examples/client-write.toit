@@ -4,7 +4,7 @@ import tftp show TFTPClient
 import encoding.json
 import encoding.tison
 
-SERVER ::= "192.168.0.174"
+SERVER ::= "127.0.0.1"
 
 /*
 The filename below refers to the filename at the remote server.

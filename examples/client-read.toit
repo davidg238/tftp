@@ -3,7 +3,7 @@
 import encoding.tison
 import tftp show TFTPClient
 
-SERVER ::= "192.168.0.217"
+SERVER ::= "127.0.0.1"
 
 main:
 
