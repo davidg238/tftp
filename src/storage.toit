@@ -57,13 +57,24 @@ abstract class Storage:
   /**
   Opens $name for writing and returns a $io.Writer.
 
+  $tsize-hint, when not null, is the total number of bytes the caller
+    expects to write, as advertised by the client via the RFC 2349 tsize
+    option. Backends that pre-allocate (SQLite zeroblob, S3 multipart,
+    fixed-region flash, ...) should use it to reserve space up front and
+    throw $STORAGE-NO-SPACE before any data is accepted, so the server
+    can fail the transfer fast. Backends that grow on demand (e.g. a
+    plain filesystem) can ignore it. The hint may be inaccurate if the
+    client streams without knowing the size; backends should be tolerant
+    of the actual write differing.
+
   Throws $STORAGE-FILE-EXISTS when the file already exists and overwrite is
-    not allowed, or $STORAGE-ACCESS-DENIED when writes are forbidden by
-    policy.
+    not allowed, $STORAGE-ACCESS-DENIED when writes are forbidden by
+    policy, or $STORAGE-NO-SPACE when $tsize-hint exceeds available
+    capacity.
   The caller must close the returned writer when done; the contents become
     observable via $exists once the writer is closed.
   */
-  abstract writer-for name/string -> io.Writer
+  abstract writer-for name/string --tsize-hint/int?=null -> io.Writer
 
   /** Whether the storage is willing to serve any read request. */
   reads-allowed -> bool: return true
@@ -109,7 +120,12 @@ class FilesystemStorage extends Storage:
     if not file.is-file path: throw STORAGE-FILE-NOT-FOUND
     return (file.Stream.for-read path).in
 
-  writer-for name/string -> io.Writer:
+  /**
+  $tsize-hint is currently ignored: filesystem writes grow on demand and
+    early statfs/disk-free checks aren't yet implemented. Backends that
+    do support pre-allocation should override this method.
+  */
+  writer-for name/string --tsize-hint/int?=null -> io.Writer:
     if read-only_: throw STORAGE-ACCESS-DENIED
     path := resolve_ name
     if file.is-file path and not allow-overwrite_:
