@@ -2,7 +2,6 @@
 
 import io
 import log
-import monitor
 import net
 import net.udp
 
@@ -77,7 +76,9 @@ abstract class Exchange:
   /**
   Whether $source is acceptable as a peer source.
 
-  Called from $receive_ before $peer-tid_ is locked. Default returns true;
+  Called from $receive_ exactly once, on the first datagram, before
+    $peer-tid_ is locked. After lock, source enforcement is exact-equality
+    with $peer-tid_ and this hook is not consulted. Default returns true;
     the client overrides to check that the source's IP matches the resolved
     server IP, rejecting datagrams from any other IP as part of RFC 1350
     §4 TID enforcement.
@@ -151,8 +152,7 @@ abstract class Exchange:
     throw "TFTP: peer error $err.error-code at block $block-num_: $err.resolved-msg"
 
   /**
-  Applies a server's OACK to local state on the client side, or validates
-    a client's options for OACK construction on the server side.
+  Applies a peer's OACK to local state.
 
   Validates that no OACK option was returned without being requested
     (RFC 2347 §3) and that any blksize is in range and not greater than
