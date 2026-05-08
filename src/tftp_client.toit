@@ -4,10 +4,12 @@ import io
 import io.buffer show Buffer
 import io.reader show Reader
 import io.writer show Writer
+import log
 import net
 import net.modules.dns show dns-lookup
 import net.udp
 
+import .exchange
 import .packets
 
 /**
@@ -34,22 +36,6 @@ TFTP block numbers are unsigned 16-bit, so a single transfer is limited to
 TFTP-DEFAULT-PORT ::= 69
 
 /**
-Default per-receive timeout, in milliseconds.
-
-Kept short so transient packet loss is recovered from quickly. The
-  retransmission budget is $DEFAULT-TIMEOUT-MS_ * $MAX-TRIES_ ms in total.
-*/
-DEFAULT-TIMEOUT-MS_ ::= 1_000
-
-/**
-Maximum retransmissions before giving up on a packet.
-
-Set higher than the typical RFC 1350 value of 3 to better tolerate UDP
-  buffer pressure and similar transient losses on lossy links.
-*/
-MAX-TRIES_ ::= 12
-
-/**
 TFTP client to a remote server.
 
 Construct with --host=, then call $open before issuing reads or writes,
@@ -69,7 +55,7 @@ class TFTPClient:
   network_/net.Interface? := null
   socket_/udp.Socket? := null
   server-address_/net.SocketAddress? := null
-  server-tid_/net.SocketAddress? := null
+  logger_/log.Logger
 
   /**
   Block size requested via RFC 2348. If null, the request is sent without
@@ -113,13 +99,15 @@ class TFTPClient:
   constructor
       --.host/string
       --blksize/int?=null
-      --timeout-secs/int?=null:
+      --timeout-secs/int?=null
+      --logger/log.Logger=log.default:
     if blksize != null and not MIN-BLKSIZE <= blksize <= MAX-BLKSIZE:
       throw "TFTP: blksize $blksize out of range $MIN-BLKSIZE..$MAX-BLKSIZE"
     if timeout-secs != null and not 1 <= timeout-secs <= 255:
       throw "TFTP: timeout-secs $timeout-secs out of range 1..255"
     requested-blksize_ = blksize
     requested-timeout-secs_ = timeout-secs
+    logger_ = logger
 
   /**
   Opens the network and UDP socket, resolving $host via DNS if it is a name
@@ -182,7 +170,7 @@ class TFTPClient:
     last-tsize_ = null
     try:
       exchange := ClientExchange this
-      exchange.write
+      exchange.start-with-wrq
     finally:
       reset-state_
     return byte-count_
@@ -203,7 +191,7 @@ class TFTPClient:
     last-tsize_ = null
     try:
       exchange := ClientExchange this
-      exchange.read
+      exchange.start-with-rrq
       return buffer_.bytes
     finally:
       reset-state_
@@ -224,7 +212,7 @@ class TFTPClient:
     last-tsize_ = null
     try:
       exchange := ClientExchange this
-      exchange.read
+      exchange.start-with-rrq
     finally:
       reset-state_
     return byte-count_
@@ -235,48 +223,6 @@ class TFTPClient:
   validate-filename_ name/string -> none:
     if name.size == 0: throw "TFTP: filename is empty"
     if name.size > 128: throw "TFTP: filename too long ($name.size > 128)"
-
-  /** Sends $payload to the current $server-address_ (or the locked TID once known). */
-  send_ payload/ByteArray -> none:
-    target := server-tid_ != null ? server-tid_ : server-address_
-    socket_.send (udp.Datagram payload target)
-
-  /**
-  Receives the next packet relevant to this transfer.
-
-  Datagrams from end-points other than the locked $server-tid_ are answered
-    with TFTP error 5 and skipped, as required by RFC 1350 §4. Returns
-    $PacketTIMEOUT if no relevant datagram arrives within $DEFAULT-TIMEOUT-MS_.
-  */
-  receive_ -> Packet:
-    deadline-us := Time.monotonic-us + DEFAULT-TIMEOUT-MS_ * 1000
-    while true:
-      remaining-us := deadline-us - Time.monotonic-us
-      if remaining-us <= 0: return PacketTIMEOUT
-      msg/udp.Datagram? := null
-      err := catch:
-        with-timeout --us=remaining-us:
-          msg = socket_.receive
-      if err == DEADLINE-EXCEEDED-ERROR or msg == null:
-        return PacketTIMEOUT
-      if err != null:
-        throw err
-      if not is-from-server_ msg.address:
-        send-unknown-tid_ msg.address
-        continue
-      if server-tid_ == null: server-tid_ = msg.address
-      packet := Packet.deserialize (io.Reader msg.data)
-      if packet == null: continue
-      return packet
-
-  is-from-server_ source/net.SocketAddress -> bool:
-    if source.ip != host-ip_: return false
-    if server-tid_ == null: return true
-    return source == server-tid_
-
-  send-unknown-tid_ source/net.SocketAddress -> none:
-    err := PacketERROR 5 "Unknown transfer ID"
-    socket_.send (udp.Datagram err.serialize source)
 
   /**
   Reads exactly $size bytes from the current source reader, or fewer if the
@@ -320,7 +266,6 @@ class TFTPClient:
     return options.is-empty ? null : options
 
   reset-state_ -> none:
-    server-tid_ = null
     reader_ = null
     writer_ = null
     buffer_ = null
@@ -330,68 +275,70 @@ class TFTPClient:
     blksize_ = DEFAULT-BLKSIZE
 
 /**
-State machine driving a single TFTP request/response exchange.
-
-Owns the per-transfer state (block number, retry counter, cached frame for
-  retransmission) and is destroyed at the end of each call to $TFTPClient
-  read or write.
-
-# Protocol summary
-Without options:
-- Write: WRQ -> ACK0, then DATA(n)/ACK(n) until DATA shorter than blksize.
-- Read:  RRQ -> DATA(1)/ACK(1) ... last DATA shorter than blksize.
-
-With RFC 2347 options:
-- Write: WRQ+opts -> OACK -> (treat as ACK0) DATA(1)/ACK(1) ...
-- Read:  RRQ+opts -> OACK -> ACK(0) -> DATA(1)/ACK(1) ...
-
-A timeout retransmits the cached frame up to $MAX-TRIES_ before aborting.
+State machine driving a single TFTP request/response exchange initiated by
+  the client. Inherits the shared loop, retry, and TID-enforcement logic
+  from $Exchange.
 */
-class ClientExchange:
+class ClientExchange extends Exchange:
   client_/TFTPClient
 
-  opcode_/int := -1
-  cached_/ByteArray := #[]
-  block-num_/int := 0
-  tries_/int := 0
-  drained_/bool := false
-  blksize_/int := DEFAULT-BLKSIZE
-  /** Options that were sent in the most recent RRQ/WRQ. */
-  requested-options_/Map? := null
-
   constructor .client_/TFTPClient:
+    super client_.socket_ client_.logger_
 
   /** Drives a write (WRQ) exchange to completion. */
-  write -> none:
+  start-with-wrq -> none:
     opcode_ = WRQ
     block-num_ = 0
     tries_ = 0
     drained_ = false
     blksize_ = DEFAULT-BLKSIZE
+    dest_ = client_.server-address_
     requested-options_ = client_.build-options_ --is-write
-    while opcode_ != EXIT:
-      client_.send_ writer-bytes_
-      handle-write_ client_.receive_
+    drive_
 
   /** Drives a read (RRQ) exchange to completion. */
-  read -> none:
+  start-with-rrq -> none:
     opcode_ = RRQ
     block-num_ = 1
     tries_ = 0
     drained_ = false
     blksize_ = DEFAULT-BLKSIZE
+    dest_ = client_.server-address_
     requested-options_ = client_.build-options_ --no-is-write
-    while opcode_ != EXIT:
-      client_.send_ reader-bytes_
-      handle-read_ client_.receive_
+    drive_
 
-  // ---- write side ---------------------------------------------------------
+  is-acceptable-source_ source/net.SocketAddress -> bool:
+    return source.ip == client_.host-ip_
 
-  writer-bytes_ -> ByteArray:
+  on-tsize_ value/int -> none:
+    client_.last-tsize_ = value
+
+  next-frame -> ByteArray:
     if tries_ > 0: return cached_
     if opcode_ == WRQ: return wrq-frame_
+    if opcode_ == RRQ: return rrq-frame_
     if opcode_ == DATA: return next-data-frame_
+    if opcode_ == ACK: return ack-frame_
     return (PacketERROR 0 "Invalid opcode: $opcode_").serialize
+
+  handle received/Packet -> none:
+    if received.opcode == ERROR:
+      exit-error_ (received as PacketERROR)
+      return
+    if received.opcode == TIMEOUT:
+      retry-or-abort_
+      return
+    if opcode_ == WRQ:
+      handle-write_ received
+      return
+    if opcode_ == DATA:
+      handle-write_ received
+      return
+    if opcode_ == RRQ or opcode_ == ACK:
+      handle-read_ received
+      return
+
+  // ---- write side ---------------------------------------------------------
 
   wrq-frame_ -> ByteArray:
     options := requested-options_ or {:}
@@ -406,12 +353,6 @@ class ClientExchange:
     return cached_
 
   handle-write_ received/Packet -> none:
-    if received.opcode == ERROR:
-      exit-error_ (received as PacketERROR)
-      return
-    if received.opcode == TIMEOUT:
-      retry-or-abort_
-      return
     if opcode_ == WRQ and received.opcode == OACK:
       apply-oack_ (received as PacketOACK)
       // Per RFC 2347, treat OACK as if it were ACK 0 for a WRQ.
@@ -449,12 +390,6 @@ class ClientExchange:
 
   // ---- read side ----------------------------------------------------------
 
-  reader-bytes_ -> ByteArray:
-    if tries_ > 0: return cached_
-    if opcode_ == RRQ: return rrq-frame_
-    if opcode_ == ACK: return ack-frame_
-    return (PacketERROR 0 "Invalid opcode: $opcode_").serialize
-
   rrq-frame_ -> ByteArray:
     options := requested-options_ or {:}
     cached_ = (PacketRRQ client_.filename_ client_.mode_ --options=options).serialize
@@ -467,18 +402,9 @@ class ClientExchange:
     return cached_
 
   handle-read_ received/Packet -> none:
-    if received.opcode == ERROR:
-      exit-error_ (received as PacketERROR)
-      return
-    if received.opcode == TIMEOUT:
-      retry-or-abort_
-      return
     if opcode_ == RRQ and received.opcode == OACK:
       apply-oack_ (received as PacketOACK)
       // Per RFC 2347, ACK block 0 to confirm the OACK, then expect DATA 1.
-      // Stage the ACK in the loop's normal send/receive cadence by setting
-      // block-num_ back to 0; ack-frame_ on the next iteration will emit
-      // ACK 0 and advance block-num_ to 1, ready for DATA 1.
       opcode_ = ACK
       block-num_ = 0
       tries_ = 0
@@ -495,58 +421,10 @@ class ClientExchange:
       tries_ = 0
       opcode_ = ACK
       if drained_:
-        client_.send_ ack-frame_
+        send_ ack-frame_
         opcode_ = EXIT
       return
     if data.block-num < block-num_:
       if cached_.size > 0: schedule-retransmit_
       return
     schedule-retransmit_
-
-  // ---- options ------------------------------------------------------------
-
-  /**
-  Applies a server's OACK to local state.
-
-  Validates that the server hasn't returned options the client never
-    requested (RFC 2347 §3 forbids that), and that any blksize is in range.
-  */
-  apply-oack_ oack/PacketOACK -> none:
-    requested := requested-options_ or {:}
-    oack.options.do: | name/string value/string |
-      if not requested.contains name:
-        throw "TFTP: server returned unrequested option '$name'"
-      if name == OPT-BLKSIZE:
-        n := int.parse value
-        if not MIN-BLKSIZE <= n <= MAX-BLKSIZE:
-          throw "TFTP: server negotiated blksize $n out of range"
-        // Server may negotiate down but never up.
-        requested-blksize := int.parse requested[OPT-BLKSIZE]
-        if n > requested-blksize:
-          throw "TFTP: server raised blksize from $requested-blksize to $n"
-        blksize_ = n
-      else if name == OPT-TSIZE:
-        client_.last-tsize_ = int.parse value
-      else if name == OPT-TIMEOUT:
-        // Negotiated timeout is informational; the underlying receive
-        // timeout is fixed at DEFAULT-TIMEOUT-MS_ for predictable retry.
-
-  // ---- shared helpers -----------------------------------------------------
-
-  exit-error_ err/PacketERROR -> none:
-    opcode_ = EXIT
-    throw "TFTP: server error $err.error-code at block $block-num_: $err.resolved-msg"
-
-  retry-or-abort_ -> none:
-    tries_++
-    if tries_ >= MAX-TRIES_:
-      opcode_ = EXIT
-      throw "TFTP: timed out at block $block-num_ after $MAX-TRIES_ retries"
-
-  /**
-  Forces the next outbound send to reuse $cached_ instead of building a fresh
-    frame. Used when an unexpected reply arrives and the safe action is to
-    retransmit our last packet.
-  */
-  schedule-retransmit_ -> none:
-    if tries_ == 0: tries_ = 1
