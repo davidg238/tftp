@@ -36,7 +36,7 @@ serve invocation/cli.Invocation -> none:
   allow-overwrite := invocation["allow-overwrite"]
   read-only := invocation["read-only"]
   if not file.is-directory root:
-    catch: directory.mkdir --recursive root
+    directory.mkdir --recursive root
   storage := FilesystemStorage
       --root=root
       --allow-overwrite=allow-overwrite

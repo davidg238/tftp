@@ -88,6 +88,7 @@ class TFTPServer:
         if err != null:
           if stopping_: break
           logger_.warn "listen receive failed" --tags={"error": err}
+          sleep --ms=10
           continue
         if msg == null: continue
         dispatch_ msg
@@ -133,7 +134,10 @@ class TFTPServer:
       logger_.warn "rejected: max-concurrent reached" --tags={"peer": msg.address}
       return
     try:
-      // Placeholder until Task 3.
+      // Placeholder until ServerExchange lands. The slot is released in
+      // this finally for now; once a per-transfer task is spawned the
+      // release will move into that task's finally and this synchronous
+      // try/finally will go away.
       reply := PacketERROR 4 "Server not yet implemented"
       listen-socket_.send (udp.Datagram reply.serialize msg.address)
     finally:
@@ -146,6 +150,11 @@ The SDK's $monitor.Semaphore exposes only blocking $monitor.Semaphore.down,
   but the dispatcher must be able to test the cap and either reserve a
   slot or reject the request immediately. This monitor's $try-acquire
   performs that test+take atomically.
+
+# Cancellation contract
+A successful $try-acquire must be paired with $release in a `finally` on
+  the same task. If the holder is task-cancelled between $try-acquire and
+  $release, the slot leaks (this monitor has no per-task ownership tracking).
 */
 monitor Capacity_:
   count_/int := 0
