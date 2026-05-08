@@ -32,9 +32,6 @@ TFTP block numbers are unsigned 16-bit, so a single transfer is limited to
   is free to negotiate it down.
 */
 
-/** Default TFTP port. */
-TFTP-DEFAULT-PORT ::= 69
-
 /**
 TFTP client to a remote server.
 

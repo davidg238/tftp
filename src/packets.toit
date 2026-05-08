@@ -34,6 +34,9 @@ EXIT ::= 0x0F
 /** Synthetic opcode signalling a receive timeout. Never appears on the wire. */
 TIMEOUT ::= 0x0E
 
+/** Default TFTP UDP port (the well-known TFTP service port, RFC 1350). */
+TFTP-DEFAULT-PORT ::= 69
+
 /** Default block size, RFC 1350. */
 DEFAULT-BLKSIZE ::= 512
 
