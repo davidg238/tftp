@@ -1,44 +1,56 @@
-// Copyright 2024 Ekorau LLC
+// Copyright 2024, 2026 Ekorau LLC.
+//
+// Reads each asset listed in tests/assets.json from the TFTP server, writes
+// it to ./temp/, and verifies the SHA256 against the expected value.
+// Exits non-zero on any mismatch.
 
-import tftp show TFTPClient SHA256Summer
-import encoding.json
-import encoding.tison
 import encoding.hex
+import encoding.json
+import expect show *
 import host.file
-import io.writer show Writer
-import io
+import tftp show TFTPClient SHA256Summer
+
 SERVER ::= "127.0.0.1"
 
 main:
   client := TFTPClient --host=SERVER
-
   client.open
+  try:
+    map := load-expected-hashes_
+    failures := 0
+    map.do: | key/string expected/string |
+      if not check-file_ client key expected: failures++
+    expect-equals 0 failures
+    print "All $map.size files match their expected SHA256."
+  finally:
+    client.close
 
-  open_file := file.Stream.for_read "./assets.json"
-  byte_array := open_file.in.read
-  map := json.decode byte-array
-  open-file.close
+load-expected-hashes_ -> Map:
+  stream := file.Stream.for-read "./assets.json"
+  bytes := stream.in.read-all
+  stream.close
+  return json.decode bytes
+
+check-file_ client/TFTPClient key/string expected/string -> bool:
+  out-path := "./temp/$key"
+  out-stream := file.Stream.for-write out-path
+  count := 0
+  try:
+    count = client.read key --to-writer=out-stream.out
+  finally:
+    out-stream.close
+  print "Read $key from server, $count bytes"
 
   summer := SHA256Summer
-  sha-writer := summer  // The summer object itself implements write
+  in-stream := file.Stream.for-read out-path
+  try:
+    while bytes := in-stream.in.read: summer.write bytes
+  finally:
+    in-stream.close
 
-
-  map.do : | key value| 
-    filename := "./temp/$key"
-    test_out := file.Stream.for-write filename
-    count := client.read key --to-writer=test-out.out
-    test-out.close
-    print "Read $key from server, $count bytes"
-  
-    filer := file.Stream.for-read filename
-    bytes := filer.in.read
-    while bytes != null:
-      sha-writer.write bytes
-      bytes = filer.in.read
-    filer.close
-  
-    sha256sum := summer.sum
-    sum-found := hex.encode sha256sum
-    print "SHA256: $sum-found computed is correct: $(sum-found == value)"
-    summer.close
-
+  computed := hex.encode summer.sum
+  if computed == expected:
+    print "  SHA256 OK: $computed"
+    return true
+  print "  SHA256 MISMATCH for $key: expected $expected got $computed"
+  return false

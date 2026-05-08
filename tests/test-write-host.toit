@@ -1,57 +1,65 @@
-// Copyright 2024 Ekorau LLC
+// Copyright 2024, 2026 Ekorau LLC.
+//
+// Uploads each asset listed in tests/assets.json to the TFTP server's ./temp/
+// directory, then queries the server-side SHA256 service on port 8080 and
+// verifies the round-trip. Exits non-zero on any mismatch.
 
-import tftp show TFTPClient SHA256Summer
 import encoding.json
-import encoding.hex
+import expect show *
 import host.file
-import io.writer show Writer
-import io
 import http
 import net
+import tftp show TFTPClient
 
 SERVER ::= "127.0.0.1"
+SHA-SERVICE-PORT ::= 8080
 
 main:
   client := TFTPClient --host=SERVER
-
   client.open
+  try:
+    map := load-expected-hashes_
+    upload-all_ client map
+    server-hashes := fetch-server-hashes_
+    verify-all_ map server-hashes
+    print "All $map.size files uploaded and hashed correctly."
+  finally:
+    client.close
 
-  open_file := file.Stream.for_read "./assets.json"
-  byte_array := open_file.in.read
-  map := json.decode byte-array
-  open-file.close
+load-expected-hashes_ -> Map:
+  stream := file.Stream.for-read "./assets.json"
+  bytes := stream.in.read-all
+  stream.close
+  return json.decode bytes
 
-  summer := SHA256Summer
-  sha-writer := summer
-
-// Write the set of files to the server
-  map.do : | key value| 
-    inputfile := "../assets/$key"
-    reader := file.Stream.for-read inputfile
-    count := client.write-stream reader.in --filename="./temp/$key"
-    reader.close
+upload-all_ client/TFTPClient map/Map -> none:
+  map.do: | key/string _ |
+    in-path := "../assets/$key"
+    in-stream := file.Stream.for-read in-path
+    count := 0
+    try:
+      count = client.write-stream in-stream.in --filename="./temp/$key"
+    finally:
+      in-stream.close
     print "Wrote $key to server, $count bytes"
 
-// Read the list of files received and their hashes
+fetch-server-hashes_ -> Map:
   network := net.open
-  web-client := http.Client network
-  response := web-client.get "$SERVER:8080" "/"
-  data := #[]
-  while chunk := response.body.read:
-    data += chunk
-  web-client.close
-  
-  map-svr := json.decode data
+  try:
+    web-client := http.Client network
+    response := web-client.get SERVER --port=SHA-SERVICE-PORT "/"
+    data := #[]
+    while chunk := response.body.read: data += chunk
+    web-client.close
+    return json.decode data
+  finally:
+    network.close
 
-// Compare the hashes of the files received at the server with the hashes of the files sent.
-  hash-str := ""
-  result := true
-  map.do : | key value| 
-    hash-str = map-svr.get key
-    if hash_str != value:
-      print "For file: $key expected: $value  got: $hash_str"
-      result = false
-  print "All hashes compared: $result"
-  
-
-  
+verify-all_ expected/Map actual/Map -> none:
+  failures := 0
+  expected.do: | key/string want/string |
+    got := actual.get key
+    if got != want:
+      print "Mismatch for $key: expected $want got $got"
+      failures++
+  expect-equals 0 failures

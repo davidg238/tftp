@@ -1,70 +1,77 @@
-// Copyright 2024 Ekorau LLC
+// Copyright 2024, 2026 Ekorau LLC.
+//
+// Reads files from the TFTP server onto the ESP32's SD card and compares
+// each file's SHA256 against the value reported by the server-side hash
+// service. Skips the largest assets, which are too slow over Wi-Fi.
 
-import tftp show TFTPClient SHA256Summer SDCard
-import encoding.json
 import encoding.hex
-import host.file
-import io.writer show Writer
-import io
+import encoding.json
+import expect show *
+import gpio
 import http
 import net
-import gpio
+import tftp show SDCard SHA256Summer TFTPClient
 
 SERVER ::= "127.0.0.1"
+SHA-SERVICE-PORT ::= 8080
+
+SKIP-FILES ::= [
+  "sample-png-image_1mb.png",
+  "sample-png-image_20mb.png",
+  "openwrt-23.05.0-ath79-generic-openmesh_om2p-hs-v1-initramfs-kernel.bin",
+]
 
 main:
   client := TFTPClient --host=SERVER
   client.open
+  try:
+    sdcard := SDCard
+        --miso=gpio.Pin 19
+        --mosi=gpio.Pin 23
+        --clk=gpio.Pin 18
+        --cs=gpio.Pin 5
 
-  sdcard := SDCard 
-      --miso=gpio.Pin 19
-      --mosi=gpio.Pin 23
-      --clk=gpio.Pin 18
-      --cs=gpio.Pin 5
+    map := fetch-server-hashes_
+    SKIP-FILES.do: map.remove it
 
-// Read the list of files (and their hashes) avaiilable at the server
+    failures := 0
+    map.do: | key/string expected/string |
+      if not check-file_ client sdcard key expected: failures++
+    expect-equals 0 failures
+    print "All $map.size files match their expected SHA256."
+  finally:
+    client.close
+
+fetch-server-hashes_ -> Map:
   network := net.open
-  web-client := http.Client network
-  response := web-client.get "$SERVER:8080" "/"
-  data := #[]
-  while chunk := response.body.read:
-    data += chunk
-  web-client.close
-  map-svr := json.decode data
-// Prune out the larger files, as they just take too long to transfer //TODO performance issue
-  map-svr.remove "sample-png-image_1mb.png"
-  map-svr.remove "sample-png-image_20mb.png"
-  map-svr.remove "openwrt-23.05.0-ath79-generic-openmesh_om2p-hs-v1-initramfs-kernel.bin"
+  try:
+    web-client := http.Client network
+    response := web-client.get SERVER --port=SHA-SERVICE-PORT "/"
+    data := #[]
+    while chunk := response.body.read: data += chunk
+    web-client.close
+    return json.decode data
+  finally:
+    network.close
+
+check-file_ client/TFTPClient sdcard/SDCard key/string expected/string -> bool:
+  path := "/sd/$key"
+  writer := sdcard.openw path
+  count := 0
+  try:
+    count = client.read key --to-writer=writer.out
+  finally:
+    writer.close
+  print "Wrote $key to SDcard, $count bytes"
 
   summer := SHA256Summer
-  sha-writer := summer
+  reader := sdcard.openr path
+  try:
+    while bytes := reader.in.read: summer.write bytes
+  finally:
+    reader.close
 
-// Write the set of files from the server to SDcard
-  map-svr.do : | key value| 
-    filer := sdcard.openw "/sd/$key"
-    count := client.read key --to-writer=filer.out
-    filer.close
-    print "Wrote $key to SDcard, $count bytes"
-
-
-// Compare the hashes of the files on the SDcard with the server hashes.
-  hash-svr := ""
-  result := true
-  map-svr.do : | key value| 
-    filer := sdcard.openr "/sd/$key"
-    bytes := filer.in.read
-    while bytes != null:
-      sha-writer.write bytes
-      bytes = filer.in.read
-    filer.close
-
-    sha256sum := summer.sum
-    hash-found := hex.encode sha256sum
-    summer.close
-
-    if value != hash-found:
-      print "For file: $key expected: $value  got: $hash-found"
-      result = false
-  print "All hashes compared: $result"
-  
-  
+  computed := hex.encode summer.sum
+  if computed == expected: return true
+  print "Mismatch for $key: expected $expected got $computed"
+  return false
