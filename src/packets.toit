@@ -4,12 +4,16 @@ import io show BIG-ENDIAN Reader
 import io.buffer show Buffer
 
 /**
-TFTP packet types and serialization, per RFC 1350.
+TFTP packet types and serialization.
 
-The opcodes $RRQ, $WRQ, $DATA, $ACK and $ERROR are wire-level.
-$TIMEOUT is a synthetic opcode used only inside the client to model a
-  receive timeout as just another packet kind, so the state machine
-  does not need a separate code path for it.
+Implements RFC 1350 (the base protocol), RFC 2347 (option extension),
+  RFC 2348 (block size option) and RFC 2349 (transfer size and timeout
+  interval options).
+
+The opcodes $RRQ, $WRQ, $DATA, $ACK, $ERROR and $OACK are wire-level.
+$TIMEOUT and $EXIT are synthetic opcodes used only inside the client and
+  server state machines to model receive timeouts and the loop exit
+  condition without needing separate code paths.
 */
 
 /** Read request opcode. */
@@ -22,10 +26,10 @@ DATA ::= 0x03
 ACK ::= 0x04
 /** Error opcode. */
 ERROR ::= 0x05
-/** Option acknowledgement (RFC 2347). Not currently produced by this client. */
-OPACK ::= 0x06
+/** Option acknowledgement opcode (RFC 2347). */
+OACK ::= 0x06
 
-/** Synthetic opcode signalling the client has exited the state machine. */
+/** Synthetic opcode signalling the state machine has exited. */
 EXIT ::= 0x0F
 /** Synthetic opcode signalling a receive timeout. Never appears on the wire. */
 TIMEOUT ::= 0x0E
@@ -33,17 +37,29 @@ TIMEOUT ::= 0x0E
 /** Default block size, RFC 1350. */
 DEFAULT-BLKSIZE ::= 512
 
+/** Minimum block size acceptable as a negotiated option, RFC 2348. */
+MIN-BLKSIZE ::= 8
+/** Maximum block size acceptable as a negotiated option, RFC 2348. */
+MAX-BLKSIZE ::= 65464
+
 /** Maximum block number that fits in the 16-bit block field. */
 MAX-BLOCK-NUM_ ::= 0xFFFF
 
-/** Octet (binary) transfer mode. The only mode this client supports. */
+/** Octet (binary) transfer mode. The only mode supported. */
 OCTET ::= "octet"
 /** Netascii transfer mode. Not supported. */
 NETASCII ::= "netascii"
 /** Mail transfer mode. Obsolete, not supported. */
 MAIL ::= "mail"
 
-/** Standard TFTP error messages, indexed by error code 0..7 (RFC 1350). */
+/** Option name for RFC 2348 block size negotiation. */
+OPT-BLKSIZE ::= "blksize"
+/** Option name for RFC 2349 transfer size negotiation. */
+OPT-TSIZE ::= "tsize"
+/** Option name for RFC 2349 timeout interval negotiation. */
+OPT-TIMEOUT ::= "timeout"
+
+/** Standard TFTP error messages, indexed by error code 0..8 (RFC 1350, RFC 2347). */
 ERRORS ::= [
   "Not defined.",
   "File not found.",
@@ -53,6 +69,7 @@ ERRORS ::= [
   "Unknown transfer ID.",
   "File already exists.",
   "No such user.",
+  "No such option.",
 ]
 
 /**
@@ -79,6 +96,7 @@ abstract class Packet:
     if opcode == DATA:  return PacketDATA.deserialize_ reader
     if opcode == ACK:   return PacketACK.deserialize_ reader
     if opcode == ERROR: return PacketERROR.deserialize_ reader
+    if opcode == OACK:  return PacketOACK.deserialize_ reader
     return null
 
   static decode-uint16_ reader/Reader -> int:
@@ -96,21 +114,48 @@ abstract class Packet:
 
   abstract stringify -> string
 
+/**
+Reads alternating null-terminated name/value strings from $reader until the
+  reader is exhausted, returning a Map. Used for RFC 2347 options.
+Lower-cases each name so the lookup is case-insensitive (RFC 2347 §2).
+*/
+parse-options_ reader/Reader -> Map:
+  options := {:}
+  while reader.buffered-size > 0:
+    name := reader.read-string-up-to 0
+    if reader.buffered-size == 0: break  // Malformed: name without value.
+    value := reader.read-string-up-to 0
+    options[name.to-ascii-lower] = value
+  return options
+
+/** Writes the option pairs in $options as alternating null-terminated strings to $buffer. */
+write-options_ buffer/Buffer options/Map -> none:
+  options.do: | name/string value/string |
+    buffer.write name.to-byte-array
+    buffer.write-byte 0
+    buffer.write value.to-byte-array
+    buffer.write-byte 0
+
 /** Read request, sent from client to server to start a download. */
 class PacketRRQ extends Packet:
   filename/string
   mode/string
+  /** RFC 2347 options. Empty when no options are being negotiated. */
+  options/Map
 
-  constructor .filename .mode:
+  constructor .filename .mode --.options/Map={:}:
     opcode = RRQ
 
   constructor.deserialize_ reader/Reader:
     filename = reader.read-string-up-to 0
     mode = reader.read-string-up-to 0
+    options = parse-options_ reader
     opcode = RRQ
 
   stringify -> string:
-    return "RRQ | $filename | $mode"
+    return options.is-empty
+        ? "RRQ | $filename | $mode"
+        : "RRQ | $filename | $mode | $options"
 
   payload -> ByteArray:
     buffer := Buffer
@@ -118,23 +163,29 @@ class PacketRRQ extends Packet:
     buffer.write-byte 0
     buffer.write mode.to-byte-array
     buffer.write-byte 0
+    write-options_ buffer options
     return buffer.bytes
 
 /** Write request, sent from client to server to start an upload. */
 class PacketWRQ extends Packet:
   filename/string
   mode/string
+  /** RFC 2347 options. Empty when no options are being negotiated. */
+  options/Map
 
-  constructor .filename .mode:
+  constructor .filename .mode --.options/Map={:}:
     opcode = WRQ
 
   constructor.deserialize_ reader/Reader:
     filename = reader.read-string-up-to 0
     mode = reader.read-string-up-to 0
+    options = parse-options_ reader
     opcode = WRQ
 
   stringify -> string:
-    return "WRQ | $filename | $mode"
+    return options.is-empty
+        ? "WRQ | $filename | $mode"
+        : "WRQ | $filename | $mode | $options"
 
   payload -> ByteArray:
     buffer := Buffer
@@ -142,6 +193,7 @@ class PacketWRQ extends Packet:
     buffer.write-byte 0
     buffer.write mode.to-byte-array
     buffer.write-byte 0
+    write-options_ buffer options
     return buffer.bytes
 
 /** Data packet carrying $data for block $block-num. */
@@ -156,9 +208,6 @@ class PacketDATA extends Packet:
 
   constructor.deserialize_ reader/Reader:
     block-num = Packet.decode-uint16_ reader
-    // The remaining bytes of the datagram are the payload. The reader is
-    // backed by a single UDP datagram, so read-all returns exactly the
-    // data segment with no further blocking.
     data = reader.read-all or #[]
     opcode = DATA
 
@@ -193,8 +242,8 @@ class PacketACK extends Packet:
 /**
 Error packet.
 
-If $error-msg is empty and $error-code is in 0..7, $stringify falls back to the
-  RFC 1350 standard message in $ERRORS.
+If $error-msg is empty and $error-code is in 0..8, $stringify falls back to the
+  RFC 1350 / RFC 2347 standard message in $ERRORS.
 */
 class PacketERROR extends Packet:
   error-code/int
@@ -225,9 +274,35 @@ class PacketERROR extends Packet:
     return buffer.bytes
 
 /**
+Option acknowledgement (RFC 2347).
+
+Sent by the server in response to an RRQ or WRQ that included options. The
+  $options map contains the subset of options the server has accepted, with
+  the values it has chosen (which may be smaller than the requested values
+  but never larger, per RFC 2348/2349).
+*/
+class PacketOACK extends Packet:
+  options/Map
+
+  constructor .options/Map:
+    opcode = OACK
+
+  constructor.deserialize_ reader/Reader:
+    options = parse-options_ reader
+    opcode = OACK
+
+  stringify -> string:
+    return "OACK | $options"
+
+  payload -> ByteArray:
+    buffer := Buffer
+    write-options_ buffer options
+    return buffer.bytes
+
+/**
 Internal synthetic packet representing a receive timeout.
 
-Never read from or written to the wire; it lets the state machine treat
+Never read from or written to the wire; it lets state machines treat
   timeouts as just another packet type.
 */
 class PacketTIMEOUT extends Packet:
