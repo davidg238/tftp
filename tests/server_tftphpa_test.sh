@@ -111,7 +111,7 @@ put $key $key
 quit
 TFTP_PUT" || true
   else
-    tftp "$HOST" "$PORT" >/dev/null 2>&1 <<TFTP_PUT
+    tftp "$HOST" "$PORT" >/dev/null 2>&1 <<TFTP_PUT || true
 binary
 put $REPO/assets/$key $key
 quit

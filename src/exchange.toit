@@ -54,6 +54,16 @@ abstract class Exchange:
   cached_/ByteArray := #[]
   /** Options that were sent in the most recent RRQ/WRQ (client) or echoed in OACK (server). */
   requested-options_/Map? := null
+  /**
+  Set by $retry-or-abort_ once $MAX-TRIES_ retransmits have all timed out.
+
+  Signals "the peer is gone" to subclasses' run methods so they can abandon
+    the transfer silently rather than send an ERROR packet into the void
+    (RFC 1350 implementations conventionally don't reply to a peer that has
+    stopped responding). The descriptive message remains the thrown value
+    so callers (in particular the client) still surface a useful error.
+  */
+  peer-gone_/bool := false
 
   constructor .socket_ .logger_:
 
@@ -138,6 +148,7 @@ abstract class Exchange:
     tries_++
     if tries_ >= MAX-TRIES_:
       opcode_ = EXIT
+      peer-gone_ = true
       throw "TFTP: timed out at block $block-num_ after $MAX-TRIES_ retries"
 
   /**

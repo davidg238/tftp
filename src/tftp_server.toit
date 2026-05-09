@@ -187,22 +187,34 @@ class ServerExchange extends Exchange:
   /** Drives the request to completion. Maps storage exceptions to TFTP errors. */
   run -> none:
     err := catch --trace=false:
-      validate-request_
+      if not validate-request_: return
       if initial_ is PacketWRQ:
         run-wrq_ (initial_ as PacketWRQ)
       else:
         // RRQ path lands in Task 4.
         send-error_ 4 "RRQ not yet implemented"
     if err != null:
-      handle-storage-error_ err
+      if peer-gone_:
+        logger_.warn "transfer abandoned: peer gone"
+            --tags={"peer": source_, "block": block-num_}
+      else:
+        handle-storage-error_ err
 
-  validate-request_ -> none:
+  /**
+  Returns true if the request is acceptable, false otherwise.
+
+  On rejection sends an ERROR packet to the peer; the caller must abort
+    without invoking $handle-storage-error_ (which would send a second
+    ERROR with a different code).
+  */
+  validate-request_ -> bool:
     if mode_ != OCTET:
       send-error_ 4 "Only octet mode supported"
-      throw "validation: bad mode"
+      return false
     if filename_.size == 0 or filename_.size > 128:
       send-error_ 4 "Bad filename length"
-      throw "validation: bad filename length"
+      return false
+    return true
 
   run-wrq_ wrq/PacketWRQ -> none:
     tsize-hint := null
@@ -215,7 +227,15 @@ class ServerExchange extends Exchange:
     tries_ = 0
     drained_ = false
     blksize_ = DEFAULT-BLKSIZE
-    drive_
+    try:
+      drive_
+    finally:
+      // The happy WRQ path closes and nulls the writer in handle-data_ on the
+      // last block. Any other exit (validation throw, storage error mid-write,
+      // peer ERROR, max-retry timeout) lands here with the writer still open.
+      if storage-writer_ != null:
+        catch: storage-writer_.close
+        storage-writer_ = null
 
   /**
   Maps a thrown sentinel string from the $Storage backend (or other
