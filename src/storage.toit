@@ -55,7 +55,7 @@ abstract class Storage:
   abstract reader-for name/string -> io.Reader
 
   /**
-  Opens $name for writing and returns a $io.Writer.
+  Opens $name for writing and returns an $io.CloseableWriter.
 
   $tsize-hint, when not null, is the total number of bytes the caller
     expects to write, as advertised by the client via the RFC 2349 tsize
@@ -74,7 +74,7 @@ abstract class Storage:
   The caller must close the returned writer when done; the contents become
     observable via $exists once the writer is closed.
   */
-  abstract writer-for name/string --tsize-hint/int?=null -> io.Writer
+  abstract writer-for name/string --tsize-hint/int?=null -> io.CloseableWriter
 
   /** Whether the storage is willing to serve any read request. */
   reads-allowed -> bool: return true
@@ -125,7 +125,7 @@ class FilesystemStorage extends Storage:
     early statfs/disk-free checks aren't yet implemented. Backends that
     do support pre-allocation should override this method.
   */
-  writer-for name/string --tsize-hint/int?=null -> io.Writer:
+  writer-for name/string --tsize-hint/int?=null -> io.CloseableWriter:
     if read-only_: throw STORAGE-ACCESS-DENIED
     path := resolve_ name
     if file.is-file path and not allow-overwrite_:

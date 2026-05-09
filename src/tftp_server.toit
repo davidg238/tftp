@@ -6,6 +6,7 @@ import monitor
 import net
 import net.udp
 
+import .exchange
 import .packets
 import .storage
 
@@ -13,19 +14,18 @@ import .storage
 TFTP server.
 
 Listens on a single UDP port (default $TFTP-DEFAULT-PORT) and accepts
-  initial RRQ/WRQ datagrams. Each request will, in a later milestone,
-  spawn a per-transfer task on its own ephemeral UDP socket so the
-  listen port is freed for the next request immediately. Concurrent
-  transfers run as concurrent tasks on independent ports — the standard
-  TFTP server fan-out.
+  initial RRQ/WRQ datagrams. Each request spawns a per-transfer task on
+  its own ephemeral UDP socket so the listen port is freed for the next
+  request immediately. Concurrent transfers run as concurrent tasks on
+  independent ports — the standard TFTP server fan-out.
 
 Storage is provided via the $Storage interface; the bundled
   $FilesystemStorage serves a directory tree, and separate packages can
   implement other backends (e.g. SqliteStorage in tftp-sqlite).
 
-This skeleton handles the listen loop and dispatcher; RRQ/WRQ requests
-  currently receive a placeholder TFTP error 4 ("Server not yet
-  implemented"). Per-transfer logic lands in the next milestone.
+The per-transfer state machine is $ServerExchange. The current
+  implementation handles WRQ end-to-end; RRQ replies with TFTP error 4
+  ("RRQ not yet implemented") until the read path lands.
 
 # Privileged port
 On Linux, binding port 69 requires the CAP_NET_BIND_SERVICE capability or
@@ -111,9 +111,11 @@ class TFTPServer:
       listen-socket_.close
 
   /**
-  Decodes $msg, applies the concurrency cap, and replies with the
-    placeholder error for RRQ/WRQ. Malformed datagrams are dropped with
-    a warning; unsupported opcodes get TFTP error 4.
+  Decodes $msg and, on a valid RRQ/WRQ, spawns a per-transfer task that
+    drives a $ServerExchange to completion on its own ephemeral UDP
+    socket. Malformed datagrams are dropped with a warning; unsupported
+    opcodes get TFTP error 4. Requests rejected by the concurrency cap
+    receive TFTP error 0 ("Server busy").
   */
   dispatch_ msg/udp.Datagram -> none:
     packet/Packet? := null
@@ -133,15 +135,167 @@ class TFTPServer:
       listen-socket_.send (udp.Datagram reply.serialize msg.address)
       logger_.warn "rejected: max-concurrent reached" --tags={"peer": msg.address}
       return
-    try:
-      // Placeholder until ServerExchange lands. The slot is released in
-      // this finally for now; once a per-transfer task is spawned the
-      // release will move into that task's finally and this synchronous
-      // try/finally will go away.
-      reply := PacketERROR 4 "Server not yet implemented"
-      listen-socket_.send (udp.Datagram reply.serialize msg.address)
-    finally:
-      capacity_.release
+    task::
+      try:
+        ephemeral := network_.udp-open
+        try:
+          exchange := ServerExchange packet msg.address storage_ ephemeral logger_
+          exchange.run
+        finally:
+          ephemeral.close
+      finally:
+        capacity_.release
+
+/**
+Per-transfer state machine running on a server-side ephemeral UDP socket.
+
+Inherits the shared loop, retry, and TID-enforcement logic from $Exchange.
+  Direction-specific frame building and packet handling live here.
+*/
+class ServerExchange extends Exchange:
+  storage_/Storage
+  initial_/Packet                     // PacketRRQ or PacketWRQ
+  source_/net.SocketAddress
+  filename_/string
+  mode_/string
+
+  storage-writer_/io.CloseableWriter? := null
+  storage-reader_/io.Reader? := null
+  /** Set when $next-frame should send the OACK once and only once. */
+  pending-oack_/PacketOACK? := null
+
+  /**
+  Builds an exchange for the request in $initial_ received from $source_.
+
+  Caller (the dispatcher) opens $socket as the per-transfer ephemeral
+    socket. $storage_ is the shared backend.
+  */
+  constructor initial/Packet source/net.SocketAddress storage/Storage socket/udp.Socket logger/log.Logger:
+    initial_ = initial
+    source_ = source
+    storage_ = storage
+    if initial is PacketRRQ:
+      filename_ = (initial as PacketRRQ).filename
+      mode_ = (initial as PacketRRQ).mode
+    else:
+      filename_ = (initial as PacketWRQ).filename
+      mode_ = (initial as PacketWRQ).mode
+    super socket logger
+    peer-tid_ = source
+    dest_ = source
+
+  /** Drives the request to completion. Maps storage exceptions to TFTP errors. */
+  run -> none:
+    err := catch --trace=false:
+      validate-request_
+      if initial_ is PacketWRQ:
+        run-wrq_ (initial_ as PacketWRQ)
+      else:
+        // RRQ path lands in Task 4.
+        send-error_ 4 "RRQ not yet implemented"
+    if err != null:
+      handle-storage-error_ err
+
+  validate-request_ -> none:
+    if mode_ != OCTET:
+      send-error_ 4 "Only octet mode supported"
+      throw "validation: bad mode"
+    if filename_.size == 0 or filename_.size > 128:
+      send-error_ 4 "Bad filename length"
+      throw "validation: bad filename length"
+
+  run-wrq_ wrq/PacketWRQ -> none:
+    tsize-hint := null
+    if wrq.options.contains OPT-TSIZE:
+      tsize-hint = int.parse wrq.options[OPT-TSIZE]
+    storage-writer_ = storage_.writer-for filename_ --tsize-hint=tsize-hint
+    // No options handling yet — send ACK 0 and start receiving DATA.
+    opcode_ = WRQ
+    block-num_ = 0
+    tries_ = 0
+    drained_ = false
+    blksize_ = DEFAULT-BLKSIZE
+    drive_
+
+  /**
+  Maps a thrown sentinel string from the $Storage backend (or other
+    failure) to a TFTP error sent on the ephemeral socket.
+  */
+  handle-storage-error_ err -> none:
+    if err == STORAGE-FILE-NOT-FOUND:
+      send-error_ 1 "File not found"
+    else if err == STORAGE-ACCESS-DENIED:
+      send-error_ 2 "Access violation"
+    else if err == STORAGE-NO-SPACE:
+      send-error_ 3 "Disk full or allocation exceeded"
+    else if err == STORAGE-FILE-EXISTS:
+      send-error_ 6 "File already exists"
+    else:
+      send-error_ 0 "$err"
+    logger_.warn "transfer failed" --tags={"error": err, "peer": source_}
+
+  send-error_ code/int msg/string -> none:
+    catch:
+      err := PacketERROR code msg
+      socket_.send (udp.Datagram err.serialize peer-tid_)
+
+  next-frame -> ByteArray:
+    if tries_ > 0: return cached_
+    if pending-oack_ != null:
+      cached_ = pending-oack_.serialize
+      pending-oack_ = null
+      return cached_
+    if opcode_ == WRQ: return wrq-ack0-frame_
+    if opcode_ == ACK: return ack-frame_
+    return (PacketERROR 0 "Invalid opcode: $opcode_").serialize
+
+  wrq-ack0-frame_ -> ByteArray:
+    cached_ = (PacketACK 0).serialize
+    return cached_
+
+  ack-frame_ -> ByteArray:
+    cached_ = (PacketACK block-num_).serialize
+    return cached_
+
+  handle received/Packet -> none:
+    if received.opcode == ERROR:
+      exit-error_ (received as PacketERROR)
+      return
+    if received.opcode == TIMEOUT:
+      retry-or-abort_
+      return
+    if received.opcode == DATA:
+      handle-data_ (received as PacketDATA)
+      return
+    schedule-retransmit_
+
+  handle-data_ data/PacketDATA -> none:
+    expected := block-num_ + 1
+    if data.block-num == expected:
+      storage-writer_.write data.data
+      block-num_ = expected
+      if data.data.size < blksize_: drained_ = true
+      tries_ = 0
+      opcode_ = ACK
+      if drained_:
+        // Commit before the final ACK; if close throws, the client must
+        // not see success.
+        commit-err := catch:
+          storage-writer_.close
+          storage-writer_ = null
+        if commit-err != null:
+          handle-storage-error_ commit-err
+          opcode_ = EXIT
+          return
+        send_ ack-frame_
+        opcode_ = EXIT
+      return
+    if data.block-num <= block-num_:
+      // Duplicate — re-ACK the highest committed block.
+      if cached_.size > 0: schedule-retransmit_
+      return
+    // Out of order ahead.
+    schedule-retransmit_
 
 /**
 A small monitor wrapping a counter with non-blocking acquire semantics.
