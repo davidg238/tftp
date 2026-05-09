@@ -66,7 +66,7 @@ fi
 
 ROOT=$(mktemp -d -t tftp-server-test.XXXXXX)
 DOWNLOAD_DIR=$(mktemp -d -t tftp-download.XXXXXX)
-RRQ_IMPLEMENTED=${RRQ_IMPLEMENTED:-0}     # set to 1 once Task 4 lands
+RRQ_IMPLEMENTED=${RRQ_IMPLEMENTED:-1}     # Task 4 has landed; gate exercises get
 
 cleanup() {
   rm -rf "$ROOT" "$DOWNLOAD_DIR"
@@ -121,23 +121,24 @@ TFTP_PUT
 
 do_get() {
   local key=$1
+  # tftp-hpa 5.2 doesn't support `lcd`, so pass an absolute path as the local
+  # filename argument to `get`. Without it, the download lands in CWD and the
+  # sha256sum below misses it.
   if [[ -n "$CLIENT_FROM" ]]; then
     ssh -n -o BatchMode=yes "$CLIENT_FROM" \
-        "cd $REMOTE_ASSET_DIR && tftp $HOST $PORT >/dev/null 2>&1 <<TFTP_GET
+        "tftp $HOST $PORT >/dev/null 2>&1 <<TFTP_GET || true
 binary
-lcd /tmp
-get $key tftp-get-$key
+get $key /tmp/tftp-get-$key
 quit
 TFTP_GET
-sha256sum /tmp/tftp-get-$key | awk '{print \$1}'"
+sha256sum /tmp/tftp-get-$key 2>/dev/null | awk '{print \$1}'"
   else
-    tftp "$HOST" "$PORT" >/dev/null 2>&1 <<TFTP_GET
+    tftp "$HOST" "$PORT" >/dev/null 2>&1 <<TFTP_GET || true
 binary
-lcd $DOWNLOAD_DIR
-get $key
+get $key $DOWNLOAD_DIR/$key
 quit
 TFTP_GET
-    sha256sum "$DOWNLOAD_DIR/$key" | awk '{print $1}'
+    sha256sum "$DOWNLOAD_DIR/$key" 2>/dev/null | awk '{print $1}'
   fi
 }
 

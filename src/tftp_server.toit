@@ -1,6 +1,7 @@
 // Copyright 2026 Ekorau LLC.
 
 import io
+import io.buffer show Buffer
 import log
 import monitor
 import net
@@ -160,7 +161,7 @@ class ServerExchange extends Exchange:
   mode_/string
 
   storage-writer_/io.CloseableWriter? := null
-  storage-reader_/io.Reader? := null
+  storage-reader_/io.CloseableReader? := null
   /** Set when $next-frame should send the OACK once and only once. */
   pending-oack_/PacketOACK? := null
 
@@ -191,8 +192,7 @@ class ServerExchange extends Exchange:
       if initial_ is PacketWRQ:
         run-wrq_ (initial_ as PacketWRQ)
       else:
-        // RRQ path lands in Task 4.
-        send-error_ 4 "RRQ not yet implemented"
+        run-rrq_ (initial_ as PacketRRQ)
     if err != null:
       if peer-gone_:
         logger_.warn "transfer abandoned: peer gone"
@@ -237,6 +237,23 @@ class ServerExchange extends Exchange:
         catch: storage-writer_.close
         storage-writer_ = null
 
+  run-rrq_ rrq/PacketRRQ -> none:
+    storage-reader_ = storage_.reader-for filename_
+    // No options handling yet — send DATA 1 directly.
+    opcode_ = RRQ
+    block-num_ = 1
+    tries_ = 0
+    drained_ = false
+    blksize_ = DEFAULT-BLKSIZE
+    try:
+      drive_
+    finally:
+      // Close the reader on every exit (happy path included): unlike the
+      // writer, there's no commit step so closing here is the only place.
+      if storage-reader_ != null:
+        catch: storage-reader_.close
+        storage-reader_ = null
+
   /**
   Maps a thrown sentinel string from the $Storage backend (or other
     failure) to a TFTP error sent on the ephemeral socket.
@@ -267,6 +284,7 @@ class ServerExchange extends Exchange:
       return cached_
     if opcode_ == WRQ: return wrq-ack0-frame_
     if opcode_ == ACK: return ack-frame_
+    if opcode_ == RRQ or opcode_ == DATA: return next-data-frame_
     return (PacketERROR 0 "Invalid opcode: $opcode_").serialize
 
   wrq-ack0-frame_ -> ByteArray:
@@ -276,6 +294,28 @@ class ServerExchange extends Exchange:
   ack-frame_ -> ByteArray:
     cached_ = (PacketACK block-num_).serialize
     return cached_
+
+  next-data-frame_ -> ByteArray:
+    chunk := bytes-to-send_ blksize_
+    if chunk.size < blksize_: drained_ = true
+    cached_ = (PacketDATA block-num_ chunk).serialize
+    return cached_
+
+  /**
+  Reads up to $size bytes from $storage-reader_, looping until the request
+    is filled or EOF.
+
+  $io.Reader.read may return fewer bytes than requested even when more data
+    is available, so a single call can't be relied on to fill a TFTP DATA
+    block.
+  */
+  bytes-to-send_ size/int -> ByteArray:
+    result := Buffer
+    while result.size < size:
+      chunk := storage-reader_.read --max-size=(size - result.size)
+      if chunk == null: break
+      result.write chunk
+    return result.bytes
 
   handle received/Packet -> none:
     if received.opcode == ERROR:
@@ -287,7 +327,24 @@ class ServerExchange extends Exchange:
     if received.opcode == DATA:
       handle-data_ (received as PacketDATA)
       return
+    if received.opcode == ACK and (opcode_ == RRQ or opcode_ == DATA):
+      handle-rrq-ack_ (received as PacketACK)
+      return
     schedule-retransmit_
+
+  handle-rrq-ack_ ack/PacketACK -> none:
+    if ack.block-num != block-num_:
+      schedule-retransmit_
+      return
+    if drained_:
+      opcode_ = EXIT
+      return
+    next := block-num_ + 1
+    if next > MAX-BLOCK-NUM_:
+      throw "TFTP: block number would exceed $MAX-BLOCK-NUM_; file too large for negotiated block size"
+    block-num_ = next
+    opcode_ = DATA
+    tries_ = 0
 
   handle-data_ data/PacketDATA -> none:
     expected := block-num_ + 1

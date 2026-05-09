@@ -46,13 +46,13 @@ abstract class Storage:
   abstract size name/string -> int?
 
   /**
-  Opens $name for reading and returns a $io.Reader.
+  Opens $name for reading and returns a $io.CloseableReader.
 
   Throws $STORAGE-FILE-NOT-FOUND when the file does not exist, or
     $STORAGE-ACCESS-DENIED when reads are forbidden by policy.
   The caller must close the returned reader when done.
   */
-  abstract reader-for name/string -> io.Reader
+  abstract reader-for name/string -> io.CloseableReader
 
   /**
   Opens $name for writing and returns an $io.CloseableWriter.
@@ -115,7 +115,7 @@ class FilesystemStorage extends Storage:
       return file.size (resolve_ name)
     return null
 
-  reader-for name/string -> io.Reader:
+  reader-for name/string -> io.CloseableReader:
     path := resolve_ name
     if not file.is-file path: throw STORAGE-FILE-NOT-FOUND
     return (file.Stream.for-read path).in
