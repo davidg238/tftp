@@ -217,16 +217,18 @@ class ServerExchange extends Exchange:
     return true
 
   run-wrq_ wrq/PacketWRQ -> none:
-    tsize-hint := null
+    tsize-hint/int? := null
     if wrq.options.contains OPT-TSIZE:
-      tsize-hint = int.parse wrq.options[OPT-TSIZE]
+      tsize-hint = int.parse wrq.options[OPT-TSIZE] --if-error=(: null)
     storage-writer_ = storage_.writer-for filename_ --tsize-hint=tsize-hint
-    // No options handling yet — send ACK 0 and start receiving DATA.
+    pending-oack_ = build-oack_ wrq.options --is-write
+    blksize_ = negotiated-blksize_ pending-oack_
+    // First outbound is OACK (if options accepted) or ACK 0 (RFC 1350);
+    // either way the peer's first DATA carries block 1.
     opcode_ = WRQ
     block-num_ = 0
     tries_ = 0
     drained_ = false
-    blksize_ = DEFAULT-BLKSIZE
     try:
       drive_
     finally:
@@ -239,12 +241,18 @@ class ServerExchange extends Exchange:
 
   run-rrq_ rrq/PacketRRQ -> none:
     storage-reader_ = storage_.reader-for filename_
-    // No options handling yet — send DATA 1 directly.
+    pending-oack_ = build-oack_ rrq.options --no-is-write
+    blksize_ = negotiated-blksize_ pending-oack_
     opcode_ = RRQ
-    block-num_ = 1
+    if pending-oack_ != null:
+      // Per RFC 2347, the client confirms an RRQ-OACK with ACK 0; we then
+      // send DATA 1. With block-num_=0 here, handle-rrq-ack_'s ack-matches
+      // branch advances naturally to block 1 and opcode_=DATA.
+      block-num_ = 0
+    else:
+      block-num_ = 1
     tries_ = 0
     drained_ = false
-    blksize_ = DEFAULT-BLKSIZE
     try:
       drive_
     finally:
@@ -253,6 +261,44 @@ class ServerExchange extends Exchange:
       if storage-reader_ != null:
         catch: storage-reader_.close
         storage-reader_ = null
+
+  /**
+  Builds an OACK echoing the subset of $client-options the server accepts.
+
+  Recognized options: blksize (RFC 2348, clamped to MIN/MAX-BLKSIZE),
+    tsize (RFC 2349; echoed for WRQ, populated from $Storage.size for
+    RRQ), and timeout (RFC 2349; informational — the server's receive
+    timeout stays fixed at $DEFAULT-TIMEOUT-MS_ for predictable retry
+    pacing). Returns null if no option was accepted, in which case the
+    server falls through to the standard RFC 1350 exchange.
+  */
+  build-oack_ client-options/Map --is-write/bool -> PacketOACK?:
+    accepted := {:}
+    client-options.do: | name/string value/string |
+      if name == OPT-BLKSIZE:
+        n := int.parse value --if-error=(: -1)
+        if MIN-BLKSIZE <= n <= MAX-BLKSIZE:
+          accepted[OPT-BLKSIZE] = "$n"
+      else if name == OPT-TSIZE:
+        if is-write:
+          accepted[OPT-TSIZE] = value
+        else:
+          size := storage_.size filename_
+          if size != null:
+            accepted[OPT-TSIZE] = "$size"
+      else if name == OPT-TIMEOUT:
+        n := int.parse value --if-error=(: -1)
+        if 1 <= n <= 255:
+          accepted[OPT-TIMEOUT] = "$n"
+    if accepted.is-empty: return null
+    return PacketOACK accepted
+
+  /** Returns the blksize that should drive subsequent DATA frames. */
+  negotiated-blksize_ oack/PacketOACK? -> int:
+    if oack == null: return DEFAULT-BLKSIZE
+    s := oack.options.get OPT-BLKSIZE
+    if s == null: return DEFAULT-BLKSIZE
+    return int.parse s
 
   /**
   Maps a thrown sentinel string from the $Storage backend (or other
