@@ -24,9 +24,9 @@ Storage is provided via the $Storage interface; the bundled
   $FilesystemStorage serves a directory tree, and separate packages can
   implement other backends (e.g. SqliteStorage in tftp-sqlite).
 
-The per-transfer state machine is $ServerExchange. The current
-  implementation handles WRQ end-to-end; RRQ replies with TFTP error 4
-  ("RRQ not yet implemented") until the read path lands.
+The per-transfer state machine is $ServerExchange. Both directions
+  (RRQ and WRQ) are supported, with full RFC 2347/2348/2349 option
+  negotiation via $ServerExchange.build-oack_.
 
 # Privileged port
 On Linux, binding port 69 requires the CAP_NET_BIND_SERVICE capability or
