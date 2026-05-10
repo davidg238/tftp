@@ -1,13 +1,88 @@
 # Trivial File Transfer Protocol
 
-This is an implementation of [RFC 1350](https://www.rfc-editor.org/rfc/rfc1350).  
-It has been tested against a [TFTP-GO](https://github.com/lfkeitel/tftp-go) server.  
+A Toit implementation of [RFC 1350](https://www.rfc-editor.org/rfc/rfc1350)
+plus the option-negotiation extensions of RFC 2347, RFC 2348 (variable block
+size), and RFC 2349 (transfer size, timeout interval).
 
-### TODO
-- Support variable blocksize, per RFC 2348 (for use on Thread networks)
-- Determine why writing is considerably faster than reading.
+The package provides both a `TFTPClient` and a `TFTPServer`. The client has
+been validated against [TFTP-GO](https://github.com/lfkeitel/tftp-go); the
+server is validated against `tftp-hpa` (round-trip) and `atftp` (option
+negotiation, concurrency).
 
-### Running the tests
+## TFTP Server
+
+```toit
+import log
+import tftp show FilesystemStorage TFTPServer
+
+main:
+  storage := FilesystemStorage --root="/srv/tftp" --allow-overwrite
+  server := TFTPServer
+      --storage=storage
+      --port=69
+      --max-concurrent=64
+      --logger=log.default
+  server.start
+```
+
+`server.start` blocks until `server.stop` is called; the listen socket
+accepts initial RRQ/WRQ datagrams and spawns one task per transfer on
+its own ephemeral UDP socket so the listen port is freed for the next
+request immediately.
+
+`Storage` is a pluggable backend interface (see `src/storage.toit`). The
+bundled `FilesystemStorage` serves a directory tree; other backends
+(e.g. an out-of-tree `SqliteStorage`) can implement the same interface.
+
+### Privileged port
+
+On Linux, binding port 69 needs root or `cap_net_bind_service`. The
+bundled `examples/server-host.toit` binary takes a `--port` flag so you
+can run on 6969 (or any unprivileged port) for testing:
+
+```bash
+jag run -d host examples/server-host.toit -- \
+    --root=/tmp/tftp --port=6969 --allow-overwrite
+```
+
+### IPv6 / Thread
+
+The current Toit SDK does not expose IPv6 listener support; the server
+binds IPv4. For Thread / IPv6 deployments use NAT64 or a small UDP
+relay on the border router. See `docs/thread-sqlite-deployment.md`.
+
+### Running the server tests
+
+The server is exercised by three reference-implementation gates under
+`tests/`:
+
+| script | tool | what it gates |
+|---|---|---|
+| `server_tftphpa_test.sh` | `tftp` (tftp-hpa) | RRQ + WRQ round-trip for every asset in `assets.json` |
+| `server_blksize_test.sh` | `atftp` | RFC 2347/2348 option negotiation; asserts the OACK is on the wire |
+| `server_burst_test.sh` | `atftp` | N parallel puts, exercises per-transfer task fan-out |
+
+Install: `apt install tftp-hpa atftp` (Debian / Ubuntu).
+
+Local invocation works for the round-trip gate. The blksize and burst
+gates push the local UDP receive buffer near saturation under loopback;
+on a busy workstation prefer driving the client over a real LAN with
+`--client-from=USER@HOST` (the remote box must have the asset directory
+staged at `/tmp/tftp-z170-assets` by default; override with
+`REMOTE_ASSET_DIR=...`):
+
+```bash
+tests/server_tftphpa_test.sh --client-from=david@z170
+tests/server_blksize_test.sh --client-from=david@z170
+tests/server_burst_test.sh   --client-from=david@z170 --concurrent=20
+```
+
+All three gates also accept `--server=HOST:PORT` to target a server
+running on another host.
+
+## TFTP Client
+
+### Running the client tests
 A test server is required, assumed to be on the development machine, at `localhost`.  
 
 1. On the test server:  
